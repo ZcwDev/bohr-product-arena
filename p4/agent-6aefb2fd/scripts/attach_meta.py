@@ -47,6 +47,14 @@ def main() -> int:
         except Exception:
             payload = None
         if isinstance(payload, dict):
+            stage_files = [p2 for p2 in out.glob("*_result.json")]
+            if stage_files:
+                stages = payload.setdefault("stages", {})
+                for sf in stage_files:
+                    try:
+                        stages[sf.stem.replace("_result", "")] = json.loads(sf.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
             payload.setdefault("metadata_coverage", dims)
             payload.setdefault("inventory", "inventory.tsv")
             if dims.get("reproduce"):
