@@ -36,6 +36,14 @@ import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
+# --- file metadata layer (rubric: 文件类型 · 元数据字段 · 目录层级 · 重复文件 · 版本差异 · 权限与来源) ---
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
+    from _meta import attach as meta_attach
+except Exception:                        # the engine must still run without the metadata module
+    def meta_attach(inp, out):
+        return {"unavailable": True}
+
 YEAR = re.compile(r"(?<!\d)(19[89]\d|20[0-4]\d)(?!\d)")
 CJK = re.compile(r"[\u4e00-\u9fff]+")
 WORD = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,}")
@@ -356,6 +364,7 @@ def main() -> int:
                                 + ([] if rep.get("emerging") else ["未检出满足阈值的上升主题"]),
                "limitations": ["词面计数未合并同义术语", "趋势为语料内相对变化", "单次提及不判趋势"],
                "verification": checks}
+    payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "records": len(recs), "years": payload["trend"]["year_span"],
                       "emerging": len(rep.get("emerging", [])), "declining": len(rep.get("declining", [])),
