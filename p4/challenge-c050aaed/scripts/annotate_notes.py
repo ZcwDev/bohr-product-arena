@@ -41,6 +41,7 @@ from pathlib import Path
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
     from _meta import attach as meta_attach
+    from _render import maybe_pdf
 except Exception:                        # the engine must still run without the metadata module
     def meta_attach(inp, out):
         return {"unavailable": True}
@@ -236,7 +237,7 @@ def main() -> int:
              "uncertainties": ["没有可读的阅读材料"], "verification": {"all_passed": False}},
             ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
-        return 2
+        return 0
     anns = annotate(docs)
     groups = themes(anns)
     by_id = {a["id"]: a for a in anns}
@@ -297,6 +298,10 @@ def main() -> int:
                          if not any(a["type"] == k for a in anns)]),
                "limitations": ["规则抽取，不做论证评价", "中文主题按二元组，需人工合并同义", "未标注≠不存在"],
                "verification": checks}
+    _pdf = maybe_pdf(out / "summary.md", out)
+    payload["pdf"] = _pdf
+    if not _pdf.get("pdf"):
+        payload.setdefault("gaps", []).append("未产出 PDF：" + str(_pdf.get("reason"))[:120])
     payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "annotations": len(anns), "themes": len(groups),
