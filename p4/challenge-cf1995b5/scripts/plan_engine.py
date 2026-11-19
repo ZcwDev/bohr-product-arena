@@ -32,6 +32,7 @@ from pathlib import Path
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
     from _meta import attach as meta_attach
+    from _render import maybe_pdf
 except Exception:                        # the engine must still run without the metadata module
     def meta_attach(inp, out):
         return {"unavailable": True}
@@ -318,6 +319,10 @@ def main() -> int:
                                "安全/伦理/设备可用性一律列为待确认，不写成已确认事实",
                                "数值按原文抄录（含单位），未做换算"],
                "verification": checks}
+    _pdf = maybe_pdf(out / "plan.md", out)
+    payload["pdf"] = _pdf
+    if not _pdf.get("pdf"):
+        payload.setdefault("gaps", []).append("未产出 PDF：" + str(_pdf.get("reason"))[:120])
     payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
