@@ -84,6 +84,100 @@ def candidates() -> list[str]:
     return out
 
 
+SVG_RENDER_PY = r'''
+import sys, json
+src, png, pdf = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    import fitz
+except Exception as exc:
+    print(json.dumps({"ok": False, "reason": "no fitz: %s" % exc})); raise SystemExit(0)
+try:
+    doc = fitz.open(src)
+except Exception as exc:
+    print(json.dumps({"ok": False, "reason": "svg open: %s" % exc})); raise SystemExit(0)
+try:
+    if pdf:
+        open(pdf, "wb").write(doc.convert_to_pdf())
+    if png:
+        doc[0].get_pixmap(dpi=200).save(png)
+    print(json.dumps({"ok": True, "pages": doc.page_count}))
+except Exception as exc:
+    print(json.dumps({"ok": False, "reason": "render: %s" % exc}))
+'''
+
+
+def maybe_svg_outputs(svg_path: Path, out_dir: Path, stem: str = "figure") -> dict:
+    """Rasterise an SVG to PNG and PDF through PyMuPDF (no cairo needed). Never raises."""
+    if not svg_path.is_file():
+        return {"png": None, "pdf": None, "reason": f"{svg_path.name} missing"}
+    png, pdf = out_dir / f"{stem}.png", out_dir / f"{stem}.pdf"
+    errors = []
+    for py in candidates():
+        try:
+            p = subprocess.run([py, "-c", SVG_RENDER_PY, str(svg_path), str(png), str(pdf)],
+                               capture_output=True, text=True, timeout=180)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{Path(py).name}: {type(exc).__name__}")
+            continue
+        info = {}
+        for line in (p.stdout or "").splitlines()[::-1]:
+            try:
+                info = json.loads(line)
+                break
+            except Exception:
+                continue
+        if info.get("ok"):
+            return {"png": png.name if png.is_file() else None,
+                    "pdf": pdf.name if pdf.is_file() else None,
+                    "engine": f"fitz via {Path(py).name}"}
+        errors.append(f"{Path(py).name}: {info.get('reason') or (p.stderr or '').strip()[:60]}")
+    return {"png": None, "pdf": None, "reason": "no svg renderer: " + "; ".join(errors[:3])}
+
+
+PDF_PAGES_PY = r'''
+import sys, json, os
+pdf, outdir, dpi = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    import fitz
+except Exception as exc:
+    print(json.dumps({"ok": False, "reason": "no fitz: %s" % exc})); raise SystemExit(0)
+os.makedirs(outdir, exist_ok=True)
+doc = fitz.open(pdf)
+paths = []
+for i, page in enumerate(doc, 1):
+    p = os.path.join(outdir, "page-%02d.png" % i)
+    page.get_pixmap(dpi=dpi).save(p)
+    paths.append(p)
+print(json.dumps({"ok": True, "pages": len(paths), "dir": outdir}))
+'''
+
+
+def pdf_to_pngs(pdf_path: Path, outdir: Path, dpi: int = 110) -> dict:
+    """Rasterise every page of a PDF to PNG (deck previews). Never raises."""
+    if not pdf_path.is_file():
+        return {"png_pages": 0, "reason": f"{pdf_path.name} missing"}
+    errors = []
+    for py in candidates():
+        try:
+            p = subprocess.run([py, "-c", PDF_PAGES_PY, str(pdf_path), str(outdir), str(dpi)],
+                               capture_output=True, text=True, timeout=240)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{Path(py).name}: {type(exc).__name__}")
+            continue
+        info = {}
+        for line in (p.stdout or "").splitlines()[::-1]:
+            try:
+                info = json.loads(line)
+                break
+            except Exception:
+                continue
+        if info.get("ok"):
+            return {"png_pages": info["pages"], "dir": str(outdir),
+                    "engine": f"fitz via {Path(py).name}"}
+        errors.append(f"{Path(py).name}: {info.get('reason') or (p.stderr or '').strip()[:60]}")
+    return {"png_pages": 0, "reason": "no pdf rasteriser: " + "; ".join(errors[:3])}
+
+
 def maybe_pdf(md_path: Path, out_dir: Path, stem: str | None = None) -> dict:
     """Render `md_path` into `<stem>.pdf` next to it, trying several interpreters. Never raises."""
     if not md_path.is_file():
