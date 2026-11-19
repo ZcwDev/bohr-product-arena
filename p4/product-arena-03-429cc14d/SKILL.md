@@ -1,6 +1,6 @@
 ---
-name: product_arena_03_429cc14d
-description: 参考文献与引用管理：检查正文引用与文献表的双向一致（citation_without_entry / entry_without_citation）、编号顺序、重复条目与缺失字段，逐条给出定位与修法。
+name: reference-citation-manager
+description: 参考文献与引用管理：把正文引用与文献表做成双向一致——每条数字引用都能找到条目、编号按首次引用顺序重排、重复条目（同 DOI 或同标题）与缺字段（作者/年份/标题）逐条列出、混用数字与作者-年份时只报告不改写；产出重排后的文献表、引用映射表与报告，缺失文献不从别处推断补齐。
 ---
 
 ## 立刻执行（不要探索）
@@ -8,7 +8,7 @@ description: 参考文献与引用管理：检查正文引用与文献表的双�
 单命令 skill。评测里请**直接执行下面这一行**，不要读脚本、不要重实现、不要先做仓库审计：
 
 ```bash
-python3 /skills/weekly-skill/scripts/quality_audit.py --input /input --output /app/output \
+python3 /skills/weekly-skill/scripts/cite_manage.py --input /input --output /app/output \
   && python3 /skills/weekly-skill/scripts/attach_meta.py --input /input --output /app/output
 ```
 
@@ -20,8 +20,15 @@ python3 /skills/weekly-skill/scripts/quality_audit.py --input /input --output /a
 
 # 写作04｜参考文献与引用管理
 
-参考文献与引用管理：检查正文引用与文献表的双向一致（citation_without_entry / entry_without_citation）、编号顺序、重复条目与缺失字段，逐条给出定位与修法。
+参考文献与引用管理：把正文引用与文献表做成双向一致——每条数字引用都能找到条目、编号按首次引用顺序重排、重复条目（同 DOI 或同标题）与缺字段（作者/年份/标题）逐条列出、混用数字与作者-年份时只报告不改写；产出重排后的文献表、引用映射表与报告，缺失文献不从别处推断补齐。
 
-产物见下方表格（`result.json` 里 `files` 字段逐项列出）；六维文件元数据在 `inventory.tsv`，复跑信息在 `repro_manifest.json`。
+| 文件 | 内容 |
+| --- | --- |
+| `references_clean.md` | 按首次引用顺序重排的文献表；未被引用的条目单独列在文末（保留，不删） |
+| `citation_map.tsv` | 每条引用 → 新编号 · 条目定位 · 首次出现位置 · 状态（resolved / missing_entry / author_year_preserved） |
+| `reference_report.md` | 按类别列出问题（cite_without_entry / entry_without_citation / duplicate_entry / entry_incomplete / mixed_citation_style / numbering_out_of_order） |
+| `check_report.json` | 机检：数字引用全部可解析 / 编号 1..N 连续 / 重复与缺字段已列出 / 风格单一 |
+| `inventory.tsv` · `repro_manifest.json` | 六维文件元数据与复跑清单 |
 
-判定边界：**只用材料里有的东西** —— 每条结论带 `文件#定位`；材料没写的字段写「材料未说明」；做不到的写进 `gaps`，不写成已完成。
+判定边界：**不造文献** —— 缺条目就标 `missing_entry`、缺字段就列出来，不推断补全；重复条目两处编号都保留交由作者确认；
+数字与作者-年份混用时只报告，不改写正文；作者-年份引用原样保留。
