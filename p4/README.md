@@ -72,3 +72,13 @@
 | 学术 PPT 生成与编辑：学术汇报：组织页面，也保留证据映射 | [ppt-6ad93034](ppt-6ad93034/) | `python3 /skills/weekly-skill/scripts/deck_from_paper.py --input /input` |
 | 学术 PPT 模板与格式适配：学术汇报：组织页面，也保留证据映射 | [ppt-710fbc72](ppt-710fbc72/) | `python3 /skills/weekly-skill/scripts/slide_builder.py --input /input -` |
 | 学术 PPT领域总课题：学术汇报：组织页面，也保留证据映射 | [ppt-9508e25f](ppt-9508e25f/) | `python3 /skills/weekly-skill/scripts/deck_from_paper.py --input /input` |
+| product-arena-01-5a9928c1 | [product-arena-01-5a9928c1](product-arena-01-5a9928c1/) | `python3 /skills/weekly-skill/scripts/webread.py --input /input --outpu` |
+| product-arena-02-7051d92d | [product-arena-02-7051d92d](product-arena-02-7051d92d/) | `python3 /skills/weekly-skill/scripts/revflow.py --work /app/output/wor` |
+| product-arena-03-429cc14d | [product-arena-03-429cc14d](product-arena-03-429cc14d/) | `python3 /skills/weekly-skill/scripts/quality_audit.py --input /input -` |
+| product-arena-04-4b82ad21 | [product-arena-04-4b82ad21](product-arena-04-4b82ad21/) | `python3 /skills/weekly-skill/scripts/paper_writer.py --input /input --` |
+| product-arena-05-64faa4a2 | [product-arena-05-64faa4a2](product-arena-05-64faa4a2/) | `python3 /skills/weekly-skill/scripts/paper_writer.py --input /input --` |
+| product-arena-06-6d8cf72b | [product-arena-06-6d8cf72b](product-arena-06-6d8cf72b/) | `python3 /skills/weekly-skill/scripts/annotate_notes.py --input /input ` |
+| product-arena-07-865de7e4 | [product-arena-07-865de7e4](product-arena-07-865de7e4/) | `python3 /skills/weekly-skill/scripts/revflow.py --work /app/output/wor` |
+| product-arena-08-3027d350 | [product-arena-08-3027d350](product-arena-08-3027d350/) | `python3 /skills/weekly-skill/scripts/chartread.py --input /input --out` |
+| product-arena-09-0e8befd4 | [product-arena-09-0e8befd4](product-arena-09-0e8befd4/) | `python3 /skills/weekly-skill/scripts/claim_audit.py --input /input --o` |
+| product-arena-10-760d1a0b | [product-arena-10-760d1a0b](product-arena-10-760d1a0b/) | `python3 /skills/weekly-skill/scripts/mindmap.py --input /input --outpu` |
