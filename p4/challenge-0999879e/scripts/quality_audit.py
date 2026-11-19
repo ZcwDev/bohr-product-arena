@@ -248,11 +248,16 @@ def audit(text: str) -> dict:
     heads = re.findall(r"^\s{0,3}(#{1,6})\s+(.*)$", text, re.M)
     head_names = " | ".join(h[1].lower() for h in heads)
     body_low = text.lower()
-    for want, pat in (("abstract", r"\babstract\b"), ("introduction", r"\bintroduction\b"),
-                      ("methods", r"\bmethods?\b|\bmaterials and methods\b"),
-                      ("results", r"\bresults?\b"), ("discussion", r"\bdiscussion\b"),
-                      ("conclusion", r"\bconclusions?\b"), ("references", r"\breferences?\b")):
-        if not re.search(pat, body_low):
+    # Chinese manuscripts name the same sections in Chinese; matching English only produced six false
+    # "missing section" findings on a complete paper
+    for want, pat in (("abstract", r"\babstract\b|摘要|内容提要"),
+                      ("introduction", r"\bintroduction\b|引言|前言|绪论"),
+                      ("methods", r"\bmethods?\b|\bmaterials and methods\b|方法|材料与方法|实验部分"),
+                      ("results", r"\bresults?\b|结果|实验结果"),
+                      ("discussion", r"\bdiscussion\b|讨论|分析与讨论"),
+                      ("conclusion", r"\bconclusions?\b|结论|总结"),
+                      ("references", r"\breferences?\b|参考文献|文献列表")):
+        if not re.search(pat, body_low) and not re.search(pat, text):
             add("structure", "high", "document", f"全文未检出 {want} 部分",
                 f"补充或明确标注 {want} 部分（若体裁不需要，请在方法或说明中写清原因）", "error",
                 f"missing_section:{want}")
