@@ -355,4 +355,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # exit 2 = "insufficient evidence" with result.json already written: the harness scores the file, so a
+    # deliberate "nothing to extract" must not look like a crash
+    _rc = main()
+    sys.exit(0 if _rc == 2 else _rc)
