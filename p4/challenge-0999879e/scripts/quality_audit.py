@@ -141,7 +141,7 @@ def sentences(text: str) -> list[dict]:
         p = norm(para)
         if not p:
             continue
-        for sidx, sent in enumerate(re.split(r"(?<=[.!?])\s+", p), 1):
+        for sidx, sent in enumerate(re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", p), 1):
             sent = norm(sent)
             if len(sent) >= 25:
                 out.append({"locator": f"p{pno}s{sidx}", "text": sent})
