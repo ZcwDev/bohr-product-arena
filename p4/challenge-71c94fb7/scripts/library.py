@@ -205,7 +205,7 @@ def do_search(files: list[dict], query: str, log: list[dict]) -> list[dict]:
         for pno, para in enumerate(re.split(r"\n\s*\n", text), 1):
             pl = para.lower()
             if any(t in pl for t in terms) or not terms:
-                sent = next((s for s in re.split(r"(?<=[.!?])\s+", para)
+                sent = next((s for s in re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", para)
                              if any(t in s.lower() for t in terms)), para)
                 loc = f'{f["path"]}#p{pno}'
                 snippet = re.sub(r"\s+", " ", sent).strip()[:240]
