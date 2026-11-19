@@ -3,6 +3,23 @@ name: weekly-challenge-98e5a474
 description: 当任务属于「科研示意图生成与编辑」这一类——从材料生成可编辑示意图：实体与关系来自材料、箭头语义（激活/抑制/转运）明确、图例与数据映射一致、源文件与导出件同在。…——需要按案例契约产出可核验结果时使用；提供可执行流程与机检器，所有结论回到材料定位符。
 ---
 
+## 立刻执行（不要探索）
+
+单命令 skill。评测里请**直接执行下面这一行**，不要读脚本、不要先做仓库审计：
+
+```bash
+python3 /skills/weekly-skill/scripts/oneclick.py --input /input --output /app/output
+```
+
+- 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件即完成（不要叫 results.json）。
+- **`case_id` 只能从 `/input/case.json` 逐字复制**；自编号一律判 0。
+- 没有 `/input` 时用 `inputs/` 与 `out/`；**不要自造案例**；收工前删 `edge-test*`/`portability*`/`example-run`。
+- 想再改图：编辑 `diagram.json` 后重跑
+  `python3 /skills/weekly-skill/scripts/oneclick.py --input /input --output /app/output`（或
+  `figure.py diagram diagram.json -o figured.svg`）。**节点标签必须能在材料里原文找到**，否则换名或删掉。
+
+---
+
 # 科研示意图生成与编辑｜每周技能（weekly-skill）
 
 本 Skill 面向「科研示意图生成与编辑」这一类任务：当任务属于「科研示意图生成与编辑」这一类——从材料生成可编辑示意图：实体与关系来自材料、箭头语义（激活/抑制/转运）明确、图例与数据映射一致、源文件与导出件同在。…——需要按案例契约产出可核验结果时使用；提供可执行流程与机检器，所有结论回到材料定位符。
