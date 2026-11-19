@@ -28,6 +28,14 @@ import sys
 import zipfile
 from pathlib import Path
 
+# --- file metadata layer (rubric: 文件类型 · 元数据字段 · 目录层级 · 重复文件 · 版本差异 · 权限与来源) ---
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
+    from _meta import attach as meta_attach
+except Exception:                        # the engine must still run without the metadata module
+    def meta_attach(inp, out):
+        return {"unavailable": True}
+
 NUM = re.compile(r"(?<![0-9.])(\d+(?:\.\d+)?)\s*(mm/min|mm/s|%/min|°C|MPa|kPa|GPa|mL|min|days?|weeks?|"
                  r"rpm|Hz|mm|cm|µm|um|nm|kg|mg|g|L|h|s|V|A|W|%|N)(?![A-Za-z])")
 HYPO = re.compile(r"\b(hypothes\w+|we (?:expect|aim|propose|predict|test)|objective|goal|aim of)\b", re.I)
@@ -296,6 +304,7 @@ def main() -> int:
                                "安全/伦理/设备可用性一律列为待确认，不写成已确认事实",
                                "数值按原文抄录（含单位），未做换算"],
                "verification": checks}
+    payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
     print(json.dumps({"case_id": case_id, "status": payload["status"],
