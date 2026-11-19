@@ -36,6 +36,7 @@ from pathlib import Path
 try:                                     # the metadata layer is shared with the other engines
     sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
     from _meta import attach as meta_attach
+    from _render import maybe_pdf
 except Exception:
     def meta_attach(inp, out):
         return {"unavailable": True}
@@ -281,6 +282,10 @@ def main() -> int:
                "gaps": missing,
                "limitations": ["规格抽取，不执行浏览器", "选择器需现场勘察", "步骤不重排不补写"],
                "verification": checks}
+    _pdf = maybe_pdf(out / "plan.md", out)
+    payload["pdf"] = _pdf
+    if not _pdf.get("pdf"):
+        payload.setdefault("gaps", []).append("未产出 PDF：" + str(_pdf.get("reason"))[:120])
     payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "status": payload["status"], "steps": len(rep["steps"]),
