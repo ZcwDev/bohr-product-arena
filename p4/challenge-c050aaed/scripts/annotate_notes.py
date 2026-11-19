@@ -37,6 +37,14 @@ import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
+# --- file metadata layer (rubric: 文件类型 · 元数据字段 · 目录层级 · 重复文件 · 版本差异 · 权限与来源) ---
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
+    from _meta import attach as meta_attach
+except Exception:                        # the engine must still run without the metadata module
+    def meta_attach(inp, out):
+        return {"unavailable": True}
+
 NUM = re.compile(r"(?<!\d)(\d+(?:\.\d+)?)\s*(%|°C|µm|um|nm|mm|cm|m|MPa|GPa|kPa|Hz|kHz|min|h|s|g|mg|kg|mL|L|"
                  r"J/mm³|cycles?|次)")
 CUE = {
@@ -289,6 +297,7 @@ def main() -> int:
                          if not any(a["type"] == k for a in anns)]),
                "limitations": ["规则抽取，不做论证评价", "中文主题按二元组，需人工合并同义", "未标注≠不存在"],
                "verification": checks}
+    payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "annotations": len(anns), "themes": len(groups),
                       "by_type": payload["annotations"]["by_type"],
