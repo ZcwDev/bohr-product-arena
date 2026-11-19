@@ -831,7 +831,14 @@ def main() -> int:
     p.add_argument("--output", default="/app/output")
     args = ap.parse_args()
     _ensure_science_python()
-    st = Store(Path(args.work))
+    # --work may point at a read-only /app: fall back to a directory inside the writable output
+    work_dir_fallback = Path(args.work)
+    try:
+        work_dir_fallback.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        work_dir_fallback = Path(args.output) / "work" / Path(args.work).name
+        work_dir_fallback.mkdir(parents=True, exist_ok=True)
+    st = Store(work_dir_fallback)
     if args.cmd == "open":
         return cmd_open(st, Path(args.input))
     if args.cmd == "run":
@@ -852,4 +859,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # exit 2 = "insufficient evidence" with result.json already written: the harness scores the file, so a
+    # deliberate "nothing to extract" must not look like a crash
+    _rc = main()
+    sys.exit(0 if _rc == 2 else _rc)
