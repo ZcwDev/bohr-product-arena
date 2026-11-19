@@ -213,6 +213,36 @@ def _docx(title: str, lines: list[str]) -> bytes:
     return buf.getvalue()
 
 
+CAPTION = re.compile(r"^\s*(图|表|Figure|Fig\.?|Table)\s*\.?\s*\d+", re.I)
+FORMULA = re.compile(r"(\$\$[^$]{2,}\$\$|\$[^$]{2,}\$|\\begin\{equation\}|\\\[[^\]]{2,}\\\]|"
+                     r"公式\s*[（(]?\s*\d|\b(?:Eq(?:uation)?\.?)\s*[（(]?\s*\d|"
+                     r"[（(]\s*\d{1,2}\s*[)）][.。,，]?\s*$)")
+
+
+def special_segments(payload: str, kind: str, blocks: list[dict]) -> list[dict]:
+    """Captions, table header rows and formulas are required deliverables that sentence splitting misses.
+
+    题面明确要求覆盖"图表题注与表头、公式与编号"；这些行往往不是完整句子，按句切分会被丢掉或与正文混在一起。
+    """
+    out: list[dict] = []
+    raw_lines = payload.splitlines()
+    seen: set[str] = set()
+    for lineno, line in enumerate(raw_lines, 1):
+        t = norm(line)
+        if not t or len(t) < 4:
+            continue
+        if CAPTION.match(t) and t not in seen:
+            seen.add(t); out.append({"id": "", "kind": "caption", "text": t[:400]})
+        elif FORMULA.search(t) and t not in seen:
+            seen.add(t); out.append({"id": "", "kind": "formula", "text": t[:400]})
+    # markdown table header = first row of a pipe block followed by a separator row
+    for i in range(len(raw_lines) - 1):
+        a, b = norm(raw_lines[i]), norm(raw_lines[i + 1])
+        if a.startswith("|") and re.fullmatch(r"\|?[\s:\-|]{3,}\|?", b) and a not in seen:
+            seen.add(a); out.append({"id": "", "kind": "table_head", "text": a[:400]})
+    return out
+
+
 def write_tsv(path: Path, header: list[str], rows: list[list]) -> None:
     with path.open("w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh, delimiter="\t", quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
@@ -314,6 +344,12 @@ def main() -> int:
     payload, kind = read_source(src_file)
     title, blocks = blocks_of(payload, kind)
     segs = segment(blocks)
+    for sp_ in special_segments(payload, kind, blocks):
+        same = next((x for x in segs if x["text"] == sp_["text"]), None)
+        if same is not None:
+            same["kind"] = sp_["kind"]          # 已被切成句子，但类型要标成 caption/formula/table_head
+        else:
+            segs.append({"id": f"L{len(segs) + 1}", "kind": sp_["kind"], "text": sp_["text"]})
     gloss = glossary(segs)
     if not segs:
         (out / "result.json").write_text(json.dumps(
