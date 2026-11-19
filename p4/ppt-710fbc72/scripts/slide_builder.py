@@ -105,7 +105,8 @@ def collect(root: Path) -> tuple[list[dict], list[str]]:
                     return
                 joined = norm(" ".join(para_lines))
                 for sent in re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", joined):
-                    if len(sent) < 40:
+                    _cjk = len(re.findall(r"[\u4e00-\u9fff]", sent))
+                    if len(sent) < (16 if _cjk >= 8 else 40):
                         continue
                     sidx += 1
                     out.append({"source": path.name, "page": pno,
@@ -330,7 +331,12 @@ def main() -> int:
     numbers = [{"value": f"{m.group(1)} {m.group(2)}", "locator": b["locator"],
                 "quote": b["text"][:160]}
                for b in blocks for m in [NUM.search(b["text"])] if m]
-    findings = [b for b in blocks if len(b["text"]) > 60][:6]
+    # Chinese sentences are shorter but complete: 24 characters is a full claim in Chinese
+    def _long_enough(t: str) -> bool:
+        cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
+        return len(t) > (24 if cjk >= 8 else 60)
+
+    findings = [b for b in blocks if _long_enough(b["text"])][:6]
 
     try:
         from pptx import Presentation
