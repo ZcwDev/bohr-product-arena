@@ -139,7 +139,9 @@ def sentences(text: str) -> list[dict]:
             continue
         for sidx, sent in enumerate(re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", p), 1):
             sent = norm(sent)
-            if len(sent) >= 25:
+            # 中文一句话 12–24 字就是完整判断；25 字下限会把它们整句丢掉（实测一份完整中文稿只扫到 7 句）
+            cjk = len(re.findall(r"[\u4e00-\u9fff]", sent))
+            if len(sent) >= (12 if cjk >= 8 else 25):
                 out.append({"locator": f"p{pno}s{sidx}", "text": sent})
     return out
 
