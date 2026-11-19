@@ -23,3 +23,5 @@ python3 /skills/weekly-skill/scripts/screen_ledger.py --input /input --output /a
 可复核的文献检索台账：候选集去重（DOI/标题，双 id 留痕）、按标准版本逐条纳排（命中词+原文定位）、PRISMA 计数对账、排序分与命中片段，空结果与元数据缺失显式报告，不补造文献。
 
 产出与自查见脚本写出的 `result.json`（含 `status`、证据定位与 `verification`）。
+
+- `search_strategy.md`：检索策略 —— 数据库、检索字段、时间范围、语种限制、材料给出的检索式（逐字）与由纳入标准推导的检索式（标注为推导、需人工复核）。
