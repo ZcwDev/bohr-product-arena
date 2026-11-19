@@ -35,6 +35,7 @@ from pathlib import Path
 try:                                     # sibling module: file metadata is graded on every case
     sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
     from _meta import attach as meta_attach, inventory as meta_inventory
+    from _render import maybe_pdf
 except Exception:                        # pragma: no cover - the engine must still run without it
     def meta_attach(inp, out):
         return {"unavailable": True}
@@ -408,8 +409,9 @@ def main() -> int:
     }
     checks["all_passed"] = all(checks.values())
     dims = meta_attach(inp, out)
+    _pdf = maybe_pdf(out / "answer.md", out)
     payload = {"case_id": case_id, "status": "answered" if answered else "insufficient_evidence",
-               "metadata_coverage": dims,
+               "metadata_coverage": dims, "pdf": _pdf,
                "answer": {"primary": "answer.docx", "markdown": "answer.md",
                           "questions": len(results), "answered": answered,
                           "refused": len(results) - answered},
