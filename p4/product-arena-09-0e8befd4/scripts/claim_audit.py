@@ -232,6 +232,27 @@ def main() -> int:
             pass
     corpus = load_corpus(inp)
     claims = load_claims(inp)
+    derived_from_text = False
+    if not claims:
+        # no explicit claim list: extract assertion sentences from the material as the nanopublication set
+        pat = re.compile(r"(表明|说明|显示|发现|证实|提示|因此|可见|结果表明|we (?:find|show|observe)|"
+                         r"suggest\w*|indicat\w*)", re.I)
+        texts = []
+        for p2 in sorted(inp.rglob("*")):
+            if p2.is_file() and p2.suffix.lower() in {".md", ".txt"}:
+                texts.append((p2.name, p2.read_text(encoding="utf-8", errors="replace")))
+        idx = 0
+        for name, text in texts:
+            for pno, para in enumerate(re.split(r"\n\s*\n", text), 1):
+                for sent in re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", norm(para)):
+                    t = norm(sent)
+                    # a Chinese assertion is complete well before 18 characters of latin
+                    cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
+                    if len(t) >= (12 if cjk >= 8 else 18) and pat.search(t):
+                        idx += 1
+                        claims.append({"claim_id": f"N{idx:02d}", "text": t[:300], "orig": [],
+                                       "_locator": f"{name}#p{pno}"})
+        derived_from_text = bool(claims)
     if not claims:
         (out / "result.json").write_text(json.dumps(
             {"case_id": case_id, "status": "insufficient_evidence",
@@ -240,6 +261,9 @@ def main() -> int:
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
         return 0
     audited = [judge(c, corpus) for c in claims]
+    for a, c in zip(audited, claims):
+        if c.get("_locator"):
+            a["locator"] = c["_locator"]
     audit = {"case_id": case_id, "claims": audited}
     (out / "audit.json").write_text(json.dumps(audit, ensure_ascii=False, indent=1), encoding="utf-8")
     lines = ["# 观点证据审计（annotated report）", ""]
@@ -279,7 +303,8 @@ def main() -> int:
                          "original_citations_challenged": sum(
                              1 for a in audited if a["original_citation_problem"])},
                "checks": "check_report.json",
-               "gaps": ([] if corpus else ["没有可读的 corpus.json，所有观点只能判 insufficient"]),
+               "gaps": ([] if corpus else ["没有可读的 corpus.json，所有观点只能判 insufficient"])
+                       + (["输入未提供 claims.json，断言由材料中的结论句提取（已标 locator）"] if derived_from_text else []),
                "limitations": ["判定基于字面重合与数值一致，不做语义推理",
                                "被修订/撤稿的段落只用于反驳，不用于支持",
                                "证据只引用整段原文，不做改写（改写会导致逐字核对失败）"],
