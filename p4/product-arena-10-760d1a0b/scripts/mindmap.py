@@ -121,12 +121,15 @@ BOILER = re.compile(r"(PLOS ONE \||DOI:\s*10\.|doi:\s*10\.1371/|OPEN ACCESS|Crea
                     r"Copyright:|^\s*\d+\s*/\s*\d+\s*$)", re.I)
 HEAD_CUE = re.compile(r"^(abstract|introduction|background|related work|materials? and methods?|"
                       r"methods?|experimental|results?|discussion|conclusions?|limitations?|"
-                      r"references|acknowledg\w*|appendix)\b", re.I)
-CONTRAST = re.compile(r"\b(however|whereas|in contrast|unlike|although|but)\b", re.I)
+                      r"references|acknowledg\w*|appendix)\b|"
+                      r"^(摘要|内容提要|引言|前言|绪论|背景|相关工作|方法|材料与方法|实验部分|实验方法|"
+                      r"结果|实验结果|讨论|分析与讨论|结论|总结|局限|参考文献|致谢|附录)", re.I)
+CONTRAST = re.compile(r"\b(however|whereas|in contrast|unlike|although|but)\b|然而|但是|相反|尽管|相比之下|而", re.I)
 FINDING = re.compile(r"\b(we (?:show|found|report|demonstrate|observe)|results? (?:show|indicate)|"
                      r"increase[sd]?|decrease[sd]?|improve[sd]?|reduc\w+|higher|lower|greater)\b", re.I)
 METHOD = re.compile(r"\b(we (?:used|measured|tested|printed|performed)|samples? were|"
-                    r"specimens? were|was (?:measured|calculated|evaluated))\b", re.I)
+                    r"specimens? were|was (?:measured|calculated|evaluated))\b|"
+                    r"采用|使用|测量|测试|打印|制备|记录|统计|计算|评估", re.I)
 LIMIT = re.compile(r"\b(limitation|assum\w+|only|not (?:measured|reported|investigated)|"
                    r"further (?:work|study)|future work)\b", re.I)
 QUESTION = re.compile(r"\b(aim|objective|goal|we (?:investigate|examine|ask)|research question|"
@@ -359,12 +362,16 @@ def build_graph(blocks: list[dict], units: list[dict], case_id: str, max_nodes: 
         elif current is not None:
             current[1].append(b)
     if not sections:  # no detectable headings: one synthetic section covering the material
-        sections = [({"text": "body", "locator": blocks[0]["locator"] if blocks else "-"}, blocks)]
+        first_text = norm(blocks[0]["text"])[:70] if blocks else ""
+        sections = [({"text": first_text or "全文", "locator": blocks[0]["locator"] if blocks else "-",
+                      "synthetic": True}, blocks)]
     for head, body in sections:
         label = norm(head["text"])[:70]
         if not label:
             continue
-        sec = add(label, "section", head["locator"], label, root, evidence_type="summary")
+        # 合成章节没有原文标题可引，引文留空（不伪造），但定位仍在
+        sec = add(label, "section", head["locator"], "" if head.get("synthetic") else label, root,
+                  evidence_type="summary")
         # level 2: the section's most informative sentences, in document order
         keys = {(b["page"], b["block"]) for b in body}
         picked = [u for u in units if (u["page"], u["block"]) in keys]
@@ -781,8 +788,12 @@ def main() -> int:
 
 
 def verify(graph: dict, blocks: list[dict], units: list[dict]) -> dict:
-    corpus = norm(" ".join(b["text"] for b in blocks))
-    quotes_ok = all(norm(n["quote"]) in corpus for n in graph["nodes"] if n["kind"] != "title")
+    # 逐字比对忽略空白：引文与原文的中句拼接方式不同（一个空格 vs 直接相接），
+    # 但换词/改字仍然会被抓出来。空引文（结构节点）不参与该检查。
+    flat = lambda t: re.sub(r"\s+", "", str(t or ""))
+    corpus = flat(" ".join(b["text"] for b in blocks))
+    quoted = [n for n in graph["nodes"] if n["kind"] != "title" and flat(n["quote"])]
+    quotes_ok = all(flat(n["quote"]) in corpus for n in quoted) if quoted else False
     ids = {n["id"] for n in graph["nodes"]}
     edges_ok = all(e["source"] in ids and e["target"] in ids for e in graph["edges"])
     parents_ok = all(n["parent"] in ids for n in graph["nodes"] if n["parent"])
