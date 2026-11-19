@@ -23,6 +23,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from _render import pdf_to_pngs
+except Exception:
+    def pdf_to_pngs(*a, **k):
+        return {"png_pages": 0, "reason": "renderer unavailable"}
+
 def _ensure_science_python():
     have = {}
     for mod in ("fitz", "pptx"):
@@ -439,6 +446,11 @@ def main() -> int:
         pptx_path = out / "deck.pptx"
         prs.save(str(pptx_path))
     render_status, pages = render(pptx_path, out)
+
+    _pages = pdf_to_pngs(Path(out) / "deck.pdf", Path(out) / "previews")
+    if _pages.get("png_pages"):
+        pages = pages or _pages["png_pages"]
+        render_status = f"{render_status}; previews by {_pages.get('engine')}"
 
     outline = ["# Speaker notes / source map", ""]
     for i, f in enumerate(findings, 1):
