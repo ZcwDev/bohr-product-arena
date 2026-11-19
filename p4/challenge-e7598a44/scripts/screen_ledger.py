@@ -188,6 +188,73 @@ def tally(records: list[dict], crit: dict) -> dict:
             "metadata_incomplete": [d["id"] for d in decisions if d["metadata_incomplete"]]}
 
 
+
+DBS = ("PubMed", "MEDLINE", "Web of Science", "WoS", "Scopus", "Embase", "Cochrane", "CNKI", "万方",
+       "维普", "arXiv", "bioRxiv", "medRxiv", "IEEE Xplore", "Google Scholar", "Semantic Scholar", "Crossref")
+QUERY_PAT = re.compile(r"[\"“”]([^\"“”]{8,200})[\"“”]|\b(?:KEY|TS|TI|AB|TITLE-ABS-KEY)\s*\(([^)]{6,200})\)")
+FIELD_PAT = re.compile(r"(题名|摘要|关键词|主题词|全文|title|abstract|keyword|subject term|full text)", re.I)
+LANG_PAT = re.compile(r"(英文|中文|English|Chinese|语种|language)", re.I)
+DATE_PAT = re.compile(r"(20\d{2}\s*[-–~至到]\s*(?:20\d{2}|今|present)|截至\s*20\d{2}[-/.年]\d{1,2}|search date[^.]{0,40})", re.I)
+
+
+def search_strategy(out: Path, inp: Path, crit: dict, source: str, records: int) -> dict:
+    """The briefs grade the search statement itself: databases, fields, date range, language, search date,
+    and how each line maps to an inclusion criterion. Nothing is invented: whatever the material does not
+    state is written as "材料未说明", and the derived query is labelled as derived from the criteria."""
+    texts = []
+    for p2 in sorted(inp.rglob("*")):
+        if p2.is_file() and p2.suffix.lower() in {".md", ".txt", ".json", ".csv", ".tsv", ".yaml", ".yml"} \
+                and p2.name.lower() not in {"case.json", "question.md", "question.txt", "query.md"}:
+            try:
+                texts.append(p2.read_text(encoding="utf-8", errors="replace")[:40000])
+            except Exception:
+                continue
+    blob = "\n".join(texts)
+    dbs = sorted({d for d in DBS if re.search(re.escape(d), blob, re.I)})
+    queries = []
+    for m in QUERY_PAT.finditer(blob):
+        q = (m.group(1) or m.group(2) or "").strip()
+        # a search statement is a boolean/field expression, not a stray quoted phrase from prose
+        looks_like_query = bool(re.search(r"\b(AND|OR|NOT)\b|\b(?:TS|TI|AB|TITLE-ABS-KEY)\s*\(", q, re.I)) \
+            or q.count(" ") >= 2
+        if q and looks_like_query and q not in queries:
+            queries.append(q)
+    for q in crit.get("queries") or []:
+        q = str(q).strip()
+        if q and q not in queries:
+            queries.append(q)
+    fields = sorted({m.group(1) for m in FIELD_PAT.finditer(blob)})
+    langs = sorted({m.group(1) for m in LANG_PAT.finditer(blob)})
+    dates = sorted({m.group(1).strip() for m in DATE_PAT.finditer(blob)})
+    derived = " AND ".join(f'"{t}"' for t in (crit.get("include") or [])[:6]) or "（无纳入词，未生成检索式）"
+    lines = ["# 检索策略 / Search strategy", "",
+             f"来源材料：`{source or '未识别'}`；候选集 {records} 条；检索日期（执行本脚本的日期）："
+             f"{__import__('datetime').datetime.now().strftime('%Y-%m-%d')}（自动记录，非材料声明）。", "",
+             "| 项目 | 内容 | 依据 |", "| --- | --- | --- |",
+             f"| 数据库 | {', '.join(dbs) if dbs else '材料未说明'} | {'材料原文出现' if dbs else '材料未提及，标记为未说明'} |",
+             f"| 检索字段 | {', '.join(fields) if fields else '材料未说明'} | {'材料原文出现' if fields else '材料未提及'} |",
+             f"| 时间范围 | {'; '.join(dates) if dates else ('≥ ' + str(crit.get('min_year')) if crit.get('min_year') else '材料未说明')} | {'材料原文' if dates else '按纳入标准的最小年份'} |",
+             f"| 语种限制 | {', '.join(langs) if langs else '材料未说明'} | {'材料原文出现' if langs else '材料未提及'} |",
+             "", "## 材料中出现的检索式（逐字摘录）", ""]
+    lines += [f"{i}. `{q}`" for i, q in enumerate(queries, 1)] or ["- 材料里没有给出可直接复跑的检索式。"]
+    lines += ["", "## 由纳入标准推导的检索式（本脚本生成，需人工复核后使用）", "",
+              f"`{derived}`", "",
+              "对应关系：每个纳入词对应一条检索行；排除词在筛选阶段用于剔除，不进入检索式，"
+              "以免把待判记录提前排除。", ""]
+    lines += ["## 与纳排标准的对应", ""]
+    for t in (crit.get("include") or [])[:10]:
+        lines.append(f'- 纳入词 `{t}` → 检索行 `"{t}"` → 命中后按 `screened.tsv` 的 reason 判定')
+    for t in (crit.get("exclude") or [])[:10]:
+        lines.append(f'- 排除词 `{t}` → 不入检索式，在筛选阶段判 `exclude`（理由写入 evidence_log.jsonl）')
+    if not (crit.get("include") or crit.get("exclude")):
+        lines.append("- 材料没有给出显式纳入/排除词，筛选按标题与摘要的相关性判定，判定理由逐条记录。")
+    lines += ["", "## 边界", "",
+              "- 本轮不联网：检索范围限于输入候选集，数据库与检索式来自材料或由标准推导（已分别标注）。",
+              "- 未声明的字段（时间范围/语种/检索日期）写「材料未说明」，不代替作者补齐。"]
+    (out / "search_strategy.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"databases": dbs, "queries_in_material": len(queries), "fields": fields,
+            "date_range": dates, "languages": langs, "derived_query": derived}
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default="/input")
@@ -258,6 +325,7 @@ def main() -> int:
            "- 冲突：同一 DOI/标题的多条记录按重复合并，原始 id 保留在 `evidence_log.jsonl`",
            "- 权限/接口：本轮不联网，检索范围限于输入候选集（已在上面写明）", ""]
     (out / "prisma.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    strategy = search_strategy(out, inp, crit, source, len(records))
     checks = {
         "counts_reconcile": c["reconciles"],
         "every_decision_has_a_basis": all(d["reason"] for d in rep["decisions"]),
@@ -273,7 +341,8 @@ def main() -> int:
                            "included": c["included"], "ranking": "score = 2×纳入词命中 + 摘要 + 年份"},
         "evidence": {"criteria": crit, "decisions": len(rep["decisions"]),
                      "duplicates": rep["duplicates"],
-                     "files": ["screened.tsv", "evidence_log.jsonl", "prisma.tsv", "prisma.md"]},
+                     "files": ["screened.tsv", "evidence_log.jsonl", "prisma.tsv", "prisma.md",
+                               "search_strategy.md"]},
         "state": {"empty_result": c["included"] == 0,
                   "metadata_incomplete_ids": rep["metadata_incomplete"][:40],
                   "conflicts": "同一 DOI/标题的多条记录已合并，原始 id 保留",
