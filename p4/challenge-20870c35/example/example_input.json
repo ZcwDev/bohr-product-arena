@@ -1,0 +1,17 @@
+{
+ "case_id": "EXAMPLE-NOT-A-TEST-CASE",
+ "task_instruction": "Synthetic interface example only; the evaluation supplies the real cases.",
+ "output_contract": [
+  "case_id",
+  "status",
+  "editable_source",
+  "export_artifact",
+  "content_map",
+  "compliance_checks",
+  "exceptions"
+ ],
+ "source": {
+  "title": "Synthetic example",
+  "doi": null
+ }
+}
