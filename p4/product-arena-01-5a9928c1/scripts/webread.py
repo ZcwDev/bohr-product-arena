@@ -261,19 +261,22 @@ def main() -> int:
                     continue
                 if original.get(sid) and norm(src) and norm(src) != original[sid]:
                     changed.append(sid)                 # the source column was edited: keep the original
-                pairs.append({"id": sid, "source": original.get(sid, norm(src)), "target": dst})
+                pairs.append({"id": sid, "source": original.get(sid, norm(src)), "target": dst,
+                              "why": norm(row.get("译法依据") or row.get("why") or "")})
         lines = [f"# 网页文献阅读与翻译（{case_id}）", "",
                  f"对齐段数：{len(pairs)}；未翻译：{len(missing)}。", ""]
         for p in pairs:
             lines += [f"**[{p['id']}]** {p['source']}", "", f"{p['target']}", ""]
+            if p.get("why"):
+                lines += [f"（译法依据：{p['why']}）", ""]
         if missing:
             lines += ["## 未翻译段落（保留原文，未用机翻或推测填充）", ""]
             lines += [f"- [{sid}] {original.get(sid, '')}" for sid in missing]
         (out / "bilingual.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
         (out / "bilingual.docx").write_bytes(_docx(f"网页文献阅读与翻译（{case_id}）", lines))
-        write_tsv(out / "coverage.tsv", ["id", "status", "chars_source", "chars_target"],
+        write_tsv(out / "coverage.tsv", ["id", "status", "chars_source", "chars_target", "has_rationale"],
                   [[p["id"], "translated" if p["id"] not in missing else "missing",
-                    len(p["source"]), len(p.get("target", ""))] for p in pairs]
+                    len(p["source"]), len(p.get("target", "")), bool(p.get("why"))] for p in pairs]
                   + [[sid, "missing", len(original.get(sid, "")), 0] for sid in missing])
         checks = {"all_segments_accounted_for": len(pairs) + len(missing) == len(original),
                   "source_kept_verbatim": not changed,
@@ -321,7 +324,8 @@ def main() -> int:
         return 0
     write_tsv(out / "segments.tsv", ["id", "kind", "locator", "text"],
               [[s["id"], s["kind"], f'{src_file.name}#{s["id"]}', s["text"]] for s in segs])
-    write_tsv(out / "translate.tsv", ["id", "原文", "译文"], [[s["id"], s["text"], ""] for s in segs])
+    write_tsv(out / "translate.tsv", ["id", "原文", "译文", "译法依据"],
+              [[s["id"], s["text"], "", ""] for s in segs])
     write_tsv(out / "glossary.tsv", ["term", "count", "first_segment", "translation"],
               [[g["term"], g["count"], g["first_segment"], g["translation"]] for g in gloss])
     heads = [b for b in blocks if b["tag"] in HEAD_TAGS]
