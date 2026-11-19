@@ -32,6 +32,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from _render import maybe_pdf
+except Exception:
+    def maybe_pdf(*a, **k):
+        return {"pdf": None, "reason": "renderer unavailable"}
+
 VERDICTS = ("supported", "partially_supported", "contradicted", "insufficient_evidence")
 STOP = set("""a an the of in on at to for from by with and or but as is are was were be been being
 this that these those it its their our we they he she them than then which who whom whose what
@@ -445,6 +452,16 @@ def main() -> int:
             "uncertainties": ["找不到 /input/claims-to-verify.json"],
             "limitations": limitations, "sources": [], "change_log": ["v1: 输入缺失，未作判定"]},
             ensure_ascii=False, indent=1), encoding="utf-8")
+        # still leave a readable artefact so the bundle is complete and the reason is visible
+        cards = out / "evidence_cards.md"
+        try:
+            cards.write_text("# 证据卡（无可用论断输入）\n\n"
+                             "输入里没有 claims/论断清单（需要 claims.json / claims.csv 或正文中含可核验论断）。\n"
+                             "本文件如实记录未产出证据卡的原因，不做任何推断。\n", encoding="utf-8")
+            payload.setdefault("artifacts", {})["evidence_cards"] = "evidence_cards.md"
+            payload["pdf"] = maybe_pdf(cards, out)
+        except Exception:
+            pass
         print("no claims file; wrote input_error result")
         return 0
     claims = json.loads(claims_path.read_text(encoding="utf-8"))
@@ -459,8 +476,17 @@ def main() -> int:
     if not blocks:
         uncertainties.append("材料里没有任何可读文本，全部断言只能判 insufficient_evidence")
     verdicts = []
-    for item in claims:
-        claim = str(item.get("claim") or "")
+    for idx, item in enumerate(claims, 1):
+        # a claims file may be a list of strings, of {"claim": ...} or of {"text": ...}: accept all three
+        if isinstance(item, str):
+            claim, claim_id = item.strip(), f"C{idx}"
+        elif isinstance(item, dict):
+            claim = str(item.get("claim") or item.get("text") or "").strip()
+            claim_id = item.get("claim_id") or item.get("id") or f"C{idx}"
+        else:
+            claim, claim_id = str(item).strip(), f"C{idx}"
+        if not claim:
+            continue
         atoms = decompose(claim)
         judged = []
         for atom in atoms:
@@ -468,7 +494,7 @@ def main() -> int:
             judged.append({**atom, **res})
         verdict, why = combine(judged)
         verdicts.append({
-            "claim_id": item.get("claim_id"),
+            "claim_id": claim_id,
             "claim": claim,
             "verdict": verdict,
             "reason": why,
@@ -485,6 +511,7 @@ def main() -> int:
               "uncertainties": uncertainties,
               "limitations": limitations,
               "change_log": ["v1: 规则式断言拆解 + 最小充分证据检索 + 四级判定；引文全部回原文校验"]}
+    result["pdf"] = maybe_pdf(out / "evidence_cards.md", out)
     (out / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
 
     rows = ["claim_id\tatom\tverdict\tlocator\tquote"]
@@ -518,6 +545,7 @@ def main() -> int:
              "quotes_not_found": bad,
              "verdict_enums_valid": all(v["verdict"] in VERDICTS for v in verdicts),
              "claims_covered": len(verdicts) == len(claims)}
+    _pdf = maybe_pdf(out / "evidence_cards.md", out)
     (out / "SELFCHECK.json").write_text(json.dumps(check, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"claims": len(verdicts), "blocks": len(blocks),
                       "quotes_not_found": len(bad), "status": result["status"]}, ensure_ascii=False))
