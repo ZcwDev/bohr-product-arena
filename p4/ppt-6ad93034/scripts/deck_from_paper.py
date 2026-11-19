@@ -110,7 +110,9 @@ def collect(root: Path) -> tuple[list[dict], list[str]]:
                     return
                 joined = norm(" ".join(para_lines))
                 for sent in re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", joined):
-                    if len(sent) < 40:
+                    # a Chinese sentence carries the same content in ~half the characters of an English one
+                    cjk = len(re.findall(r"[\u4e00-\u9fff]", sent))
+                    if len(sent) < (16 if cjk >= 8 else 40):
                         continue
                     sidx += 1
                     out.append({"source": path.name, "page": pno,
@@ -336,8 +338,15 @@ def main() -> int:
     numbers = [{"value": f"{m.group(1)} {m.group(2)}", "locator": b["locator"],
                 "quote": b["text"][:160]}
                for b in blocks for m in [NUM.search(b["text"])] if m]
-    findings = [b for b in blocks
-                if len(b["text"]) > 60 and not JUNK_LINE.search(b["text"][:160])][:6]
+    # a Chinese finding sentence is complete at ~24 characters; the English threshold dropped every one
+    def is_finding(b: dict) -> bool:
+        t = b["text"]
+        if JUNK_LINE.search(t[:160]):
+            return False
+        cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
+        return len(t) > (24 if cjk >= 8 else 60)
+
+    findings = [b for b in blocks if is_finding(b)][:6]
     refs = [b for b in blocks
             if re.search(r"\b(fig(?:ure)?\.?\s*\d|table\s*\d|图\s*\d|表\s*\d)", b["text"], re.I)]
 
