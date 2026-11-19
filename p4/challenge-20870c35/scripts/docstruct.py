@@ -39,6 +39,7 @@ from pathlib import Path
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from _meta import attach as meta_attach
+    from _render import maybe_pdf
 except Exception:
     def meta_attach(inp, out):
         return {"unavailable": True}
@@ -323,6 +324,10 @@ def main() -> int:
                "limitations": ["结构判定基于标题与段落角色词，不判断论证是否成立",
                                "缺失章节只报告不代写", "中文段落角色按提示词与数值特征判定"],
                "verification": checks}
+    _pdf = maybe_pdf(out / "deliverable.md", out)
+    payload["pdf"] = _pdf
+    if not _pdf.get("pdf"):
+        payload.setdefault("gaps", []).append("未产出 PDF：" + str(_pdf.get("reason"))[:120])
     payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "mode": args.mode, "sections": len(rows),
