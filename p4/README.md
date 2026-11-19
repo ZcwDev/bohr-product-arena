@@ -4,6 +4,11 @@
 
 | 题目 | 目录 | 入口 |
 | --- | --- | --- |
+| 多步骤数据分析 Agent：科研数据分析：给出结果，也保留计算依据 | [agent-6aefb2fd](agent-6aefb2fd/) | `python3 /skills/weekly-skill/scripts/data_clean.py --input /input --ou` |
+| 文献检索 Agent 与自动迭代：科研检索：找到文献，也保留筛选依据 | [agent-7d0e6569](agent-7d0e6569/) | `python3 /skills/weekly-skill/scripts/screen_ledger.py --input /input -` |
+| agent-d1ab67e5 | [agent-d1ab67e5](agent-d1ab67e5/) | `python3 /skills/weekly-skill/scripts/flow_spec.py --input /input --out` |
+| agent-f8fb8bda | [agent-f8fb8bda](agent-f8fb8bda/) | `python3 /skills/weekly-skill/scripts/review_matrix.py --input /input -` |
+| 浏览器与软件智能体 Benchmark：科研自动化：完成操作，也保留过程轨迹 | [benchmark-6428712b](benchmark-6428712b/) | `python3 /skills/weekly-skill/scripts/flow_spec.py --input /input --out` |
 | 资料管理领域总课题：科研资料管理：整理文件，也保留版本关系 | [challenge-00e37955](challenge-00e37955/) | `python3 /skills/weekly-skill/scripts/library.py --mode all --input /in` |
 | 科研选题与创新性评估：文献综述：综合证据，也说明边界 | [challenge-041f89c5](challenge-041f89c5/) | `python3 /skills/weekly-skill/scripts/topic_eval.py --input /input --ou` |
 | 检索覆盖率与遗漏分析：科研检索：找到文献，也保留筛选依据 | [challenge-0467f5db](challenge-0467f5db/) | `python3 /skills/weekly-skill/scripts/screen_ledger.py --input /input -` |
