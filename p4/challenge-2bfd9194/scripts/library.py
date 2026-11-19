@@ -30,6 +30,14 @@ import sys
 import zipfile
 from pathlib import Path
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from _render import maybe_pdf
+except Exception:
+    def maybe_pdf(*a, **k):
+        return {"pdf": None, "reason": "renderer unavailable"}
+
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".ipynb_checkpoints"}
 TEXT_EXT = {".md", ".txt", ".csv", ".tsv", ".json", ".jsonl", ".py", ".yaml", ".yml"}
 DOC_EXT = {".pdf", ".docx"}
@@ -345,6 +353,17 @@ def main() -> int:
                         "无法提取文本的文件（扫描件/二进制）列入 failures，不当作已处理"],
         "verification": checks,
     }
+    # a readable summary next to the machine-readable tables (the briefs list a document too)
+    with (out / "manifest.md").open("w", encoding="utf-8") as fh:
+        fh.write(f"# 资料清单（{case_id}）\n\n共 {len(files)} 个文件；精确重复 "
+                 f"{payload['assets']['exact_duplicates']} 组，近重复 {payload['assets']['near_duplicates']} 组，"
+                 f"版本链 {len(chains)} 条，检索命中 {len(search)} 条。\n\n")
+        fh.write("| 文件 | 类型 | 字节 | sha256 | 方法 | canonical |\n| --- | --- | --- | --- | --- | --- |\n")
+        for f in sorted(files, key=lambda x: x["path"])[:80]:
+            fh.write(f'| {f["path"]} | {f["ext"]} | {f["bytes"]} | {f["sha256"]} | '
+                     f'{f["text_method"]} | {canon.get(f["sha256"], "") == f["path"]} |\n')
+    payload["summary"] = {"markdown": "manifest.md"}
+    payload["pdf"] = maybe_pdf(out / "manifest.md", out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
     print(json.dumps({"case_id": case_id, "status": payload["status"], "files": len(files),
