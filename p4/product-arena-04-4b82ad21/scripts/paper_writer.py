@@ -45,12 +45,15 @@ _ensure_science_python()
 SKIP = {"result.json", "manuscript.md", "manuscript.docx", "claim_source_map.tsv",
         "review_checklist.md", "selfcheck.json", "run.md", "skill.md", "gain.md",
         "rubric.md", "per_item.tsv", "report.md"}
-SECTIONS = [("Abstract", ("abstract", "summary")),
-            ("Introduction", ("introduction", "background", "motivation")),
-            ("Methods", ("method", "materials and methods", "experimental", "approach")),
-            ("Results", ("result", "finding", "observation")),
-            ("Discussion", ("discussion", "interpretation", "limitation")),
-            ("Conclusion", ("conclusion", "summary of findings"))]
+# Chinese manuscripts name the same sections in Chinese; matching English only produced six false
+# "章节缺材料依据" gaps on a complete Chinese draft
+SECTIONS = [("Abstract", ("abstract", "summary", "摘要", "内容提要")),
+            ("Introduction", ("introduction", "background", "motivation", "引言", "前言", "绪论")),
+            ("Methods", ("method", "materials and methods", "experimental", "approach",
+                         "方法", "材料与方法", "实验部分", "实验方法")),
+            ("Results", ("result", "finding", "observation", "结果", "实验结果", "结果与分析")),
+            ("Discussion", ("discussion", "interpretation", "limitation", "讨论", "分析与讨论")),
+            ("Conclusion", ("conclusion", "summary of findings", "结论", "总结", "结论与展望"))]
 NUM = re.compile(r"(?<![A-Za-z0-9_\-])([-+]?\d+(?:\.\d+)?)(?:\s*[±+\-/]{1,4}\s*\d+(?:\.\d+)?)?"
                  r"\s*(mm3|mm2|cm3|%|nM|µM|mM|mg/kg|mg|g|h|days?|weeks?|patients?|samples?|cells?)")
 REF_HEAD = re.compile(r"^\s*(references|bibliography|参考文献)\s*$", re.I)
@@ -142,7 +145,10 @@ def collect(root: Path) -> tuple[list[dict], list[str]]:
         if not path.is_file() or path.suffix.lower() not in {".pdf", ".txt", ".md"}:
             continue
         low = path.name.lower()
-        if low.startswith(("case.json", "task.md")) or low in SKIP:
+        # INPUTS are read here; SKIP protects this tool's own *output* names, and "manuscript.md" is a very
+        # plausible input name — skipping it silently produced zero blocks on a real draft.
+        if low.startswith(("case.json", "task.md")) or low in {"result.json", "selfcheck.json", "report.md",
+                                                               "claim_source_map.tsv", "review_checklist.md"}:
             continue
         pages = read_any(path)
         if not pages:

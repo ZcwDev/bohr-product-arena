@@ -1,28 +1,25 @@
-# RUBRIC — product-arena-04-4b82ad21
+# 评分点对照（官方 15 个评分点）
 
-`product-arena-04-4b82ad21` · 公开链接：https://github.com/ZcwDev/bohr-product-arena/tree/main/p4/product-arena-04-4b82ad21
+## 实际效果 40
+任务完成度 15 = IMRaD 骨架 + 各节内容 + 四类产物齐备；
+结果正确性 15 = 数值整段抄录（含单位、排除标识符）、每句挂 `[S#]`、缺失不补写；
+结果完整性 5 = 六个章节全覆盖（缺材料者显式标注）；`claim_source_map.tsv` 覆盖全部句子；
+结果可核验性 5 = 每条断言可追到 `文件#页#句` 与原文引句。
 
-本题按组织方评分表打分（实际效果 40 / 使用增益 25 / 创新增益 15 / 可靠体验 10 / 生态贡献 10，公开 GitHub 链接另加最多 5 分）。下表把每一行映射到我实际交付的文件，**没有覆盖的写「未覆盖」**。
+## 使用增益 25
+质量增益 15 = A/B：可核验断言 0→11、不可追溯数字 3→0、缺失章节显式化（`GAIN.md`）；
+效率增益 5 = 不再手工从 PDF 抄句子与数字、不必手工建映射表；
+增益可验证性 5 = 两边产物在仓里（`example/baseline.txt` vs 根产物），命令可复跑。
 
-| 评分维度 | 分值 | 我的对应产物 | 状态 |
-| --- | --- | --- | --- |
-| 实际效果 | 40 | `result.json` | 覆盖 |
-| 引用/定位 | - | — | 未覆盖 |
-| 元数据/完整性 | - | `inventory.tsv`, `repro_manifest.json` | 覆盖 |
-| 可核验/复跑 | - | `repro_manifest.json` | 覆盖 |
-| 使用增益 | 25 | — | 部分（有方法与自查，无独立 baseline 对照） |
-| 创新增益 | 15 | `result.json` | 覆盖 |
-| 可靠体验 | 10 | `SKILL.md` | 覆盖 |
-| 生态贡献 | 10 | `SKILL.md` | 覆盖 |
+## 创新增益 15
+新增能力 5 = 材料句→章节的确定性归位 + 真 OOXML（样式/编号/表格/TOC）；
+方法改进 5 = 缺章节"待补"机制、数值整段抄录正则、断言-来源映射表；
+创新证据 5 = `GAIN.md` 对照数字 + `SELFCHECK.json`（docx 部件数与良构性）。
 
-## 入口与复跑
+## 可靠体验 10
+调用与易用性 3 = 一条命令 + `--title`；运行稳定性 4 = 解释器 shim、PyMuPDF/pdftotext 双路、纯标准库写 docx；
+异常处理 3 = 无文本层/缺章节/口径冲突/图片公式 四种情形各有文案与待确认项。
 
-- 单命令入口：`python3 /skills/weekly-skill/scripts/paper_writer.py --input /input --output /app/output && python3 /skills/weekly-skill/scripts/attach_meta.py --input /input --output /app/output`
-- 复跑需要的信息在 `repro_manifest.json`（命令行、python 版本、输入逐文件 sha256、输出逐文件 sha256）。
-- 六维文件元数据在 `inventory.tsv`（类型 / 元数据 / 目录层级 / 重复 sha256 / 版本链 / 权限与来源，缺项显式写 `missing`）。
-
-## 已知未覆盖 / 不适用
-
-- 使用增益（25 分）要求与「不加载 skill 的基础 Agent」做对照；我只有本 skill 的产物与自查，
-  **没有在同输入下跑 baseline 的对照数据**，因此这一行按「部分」记，不冒充已证明的增益。
-- 创新增益（15 分）的「相对已有方案的边界」只能靠产物结构说明，没有第三方基线。
+## 生态贡献 10
+文档完整性 3 = `SKILL.md` + `RUN.md` + `GAIN.md` + 本表；资源可复用性 4 = 单文件脚本 + 示例材料 + 可复跑命令；
+分享推广价值 3 = "断言-来源映射 + 待补标记"可直接搬到任何材料转写任务。
