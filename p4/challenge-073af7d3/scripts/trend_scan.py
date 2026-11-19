@@ -40,6 +40,7 @@ from pathlib import Path
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
     from _meta import attach as meta_attach
+    from _render import maybe_pdf
 except Exception:                        # the engine must still run without the metadata module
     def meta_attach(inp, out):
         return {"unavailable": True}
@@ -364,6 +365,10 @@ def main() -> int:
                                 + ([] if rep.get("emerging") else ["未检出满足阈值的上升主题"]),
                "limitations": ["词面计数未合并同义术语", "趋势为语料内相对变化", "单次提及不判趋势"],
                "verification": checks}
+    _pdf = maybe_pdf(out / "trend.md", out)
+    payload["pdf"] = _pdf
+    if not _pdf.get("pdf"):
+        payload.setdefault("gaps", []).append("未产出 PDF：" + str(_pdf.get("reason"))[:120])
     payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "records": len(recs), "years": payload["trend"]["year_span"],
