@@ -250,15 +250,14 @@ def main() -> int:
     (out / "diagram.json").write_text(json.dumps(spec, ensure_ascii=False, indent=1), encoding="utf-8")
     if chart:
         (out / "chart.json").write_text(json.dumps(chart, ensure_ascii=False, indent=1), encoding="utf-8")
-    png = pdf = None
-    for cmd, target in (((sys.executable, str(HERE / "preview.py"), "svg", str(out / "figure.svg"),
-                          "-o", str(out / "figure.png")), "figure.png"),):
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
-            if r.returncode == 0 and (out / target).is_file():
-                png = target
-        except Exception:
-            pass
+    # rasterise through PyMuPDF (fitz can open SVG directly); preview.py needs cairo and often cannot
+    _rinfo = {}
+    try:
+        from _render import maybe_svg_outputs
+        _rinfo = maybe_svg_outputs(out / "figure.svg", out, "figure")
+    except Exception as exc:  # noqa: BLE001
+        _rinfo = {"png": None, "pdf": None, "reason": f"{type(exc).__name__}: {exc}"[:80]}
+    png, pdf = _rinfo.get("png"), _rinfo.get("pdf")
     text_all = "\n".join(d["text"] for d in docs)
     node_literal = all(n["label"] in text_all for n in spec["nodes"])
     checks = {
@@ -276,7 +275,7 @@ def main() -> int:
     if len(spec["nodes"]) < 3:
         gaps.append("材料里的实体关系少于 3 个，示意图只能退化为结构骨架")
     if not png:
-        gaps.append("没有 SVG 光栅化器（rsvg/inkscape/cairosvg），未产出 PNG；SVG 本身可编辑")
+        gaps.append("没有可用的 SVG 渲染器（fitz/rsvg/cairosvg），未产出 PNG/PDF；SVG 本身可编辑")
     if not node_literal:
         gaps.append("有节点标签不是材料原文，需要在 diagram.json 里改名或删除")
     (out / "check_report.json").write_text(json.dumps(
@@ -286,10 +285,10 @@ def main() -> int:
         ensure_ascii=False, indent=1), encoding="utf-8")
     payload = {"case_id": case_id,
                "status": "answered" if checks["nodes_present"] and docs else "insufficient_evidence",
-               "artifacts": {"figure": "figure.svg", "png": png, "spec": "diagram.json",
+               "artifacts": {"figure": "figure.svg", "png": png, "pdf": pdf, "spec": "diagram.json",
                              "chart_spec": "chart.json" if chart else None,
                              "engine": engine, "nodes": len(spec["nodes"]), "edges": len(spec["edges"])},
-               "checks": "check_report.json",
+               "checks": "check_report.json", "render": _rinfo,
                "gaps": gaps,
                "limitations": ["示意图从材料的关系句自动抽取，未做人工排版优化",
                                "边标签为材料原词，不做同义归一",
