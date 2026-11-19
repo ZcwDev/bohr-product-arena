@@ -32,6 +32,16 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
+try:                                     # sibling module: file metadata is graded on every case
+    sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
+    from _meta import attach as meta_attach, inventory as meta_inventory
+except Exception:                        # pragma: no cover - the engine must still run without it
+    def meta_attach(inp, out):
+        return {"unavailable": True}
+
+    def meta_inventory(inp, case_json=None):
+        return []
+
 CJK = re.compile(r"[\u4e00-\u9fff]")
 WORD = re.compile(r"[A-Za-z][A-Za-z0-9\-]{1,}")
 STOP = set("""a an the of and or in on for to with by from as at is are was were be been this that these those
@@ -83,12 +93,16 @@ CANDIDATE_SKIP = ("output-contract", "instruction", "example-input", "public-man
                   "schema", "spec", "readme", "skill", "task", "case.json", "question", "query")
 
 
-def corpus(inp: Path) -> list[dict]:
+def corpus(inp: Path, skip_paths: set[str] | None = None) -> list[dict]:
+    """Duplicate copies are excluded: citing the same text twice is not two pieces of evidence."""
+    skip_paths = skip_paths or set()
     docs = []
     for p in sorted(inp.rglob("*")):
         if not p.is_file() or p.suffix.lower() not in {".md", ".txt", ".pdf", ".docx", ".csv", ".json"}:
             continue
         if any(k in p.name.lower() for k in CANDIDATE_SKIP):
+            continue
+        if str(p.relative_to(inp)) in skip_paths:
             continue
         text = norm(read_doc(p)).replace("  ", " ")
         if len(text) < 40:
@@ -311,7 +325,10 @@ def main() -> int:
             case_id = str(json.loads((inp / "case.json").read_text(encoding="utf-8")).get("case_id") or "unreported")
         except Exception:
             pass
-    docs = corpus(inp)
+    inv = meta_inventory(inp, inp / "case.json")
+    dup_paths = {r["path"] for r in inv if r.get("duplicate_of")}
+    sha_by_name = {r["path"].split("/")[-1]: r["sha256"] for r in inv}
+    docs = corpus(inp, dup_paths)
     qs = questions(inp, args.question)
     if not docs or not qs:
         (out / "result.json").write_text(json.dumps(
@@ -333,10 +350,11 @@ def main() -> int:
             if not r["hits"]:
                 fh.write(f'{r["question"][:120]}\t0\t-\t-\t0\t(no passage matched)\n')
     with (out / "citations.tsv").open("w", encoding="utf-8") as fh:
-        fh.write("tag\tdoc\tlocator\tscore\tsentence\n")
+        fh.write("tag\tdoc\tlocator\tsha256\tscore\tsentence\n")
         for r in results:
             for c in r.get("cites", []):
-                fh.write(f'{c["tag"]}\t{c["doc"]}\t{c["locator"]}\t{c["score"]}\t{c["sentence"]}\n')
+                fh.write(f'{c["tag"]}\t{c["doc"]}\t{c["locator"]}\t{sha_by_name.get(c["doc"], "-")}\t'
+                     f'{c["score"]}\t{c["sentence"]}\n')
     with (out / "coverage.tsv").open("w", encoding="utf-8") as fh:
         fh.write("question\tsub_question\tstatus\n")
         for r in results:
@@ -369,15 +387,22 @@ def main() -> int:
                                            for r in results for c in r.get("cites", [])),
     }
     checks["all_passed"] = all(checks.values())
+    dims = meta_attach(inp, out)
     payload = {"case_id": case_id, "status": "answered" if answered else "insufficient_evidence",
+               "metadata_coverage": dims,
                "answer": {"primary": "answer.docx", "markdown": "answer.md",
                           "questions": len(results), "answered": answered,
                           "refused": len(results) - answered},
                "sources": [{"doc": d["doc"], "chars": len(d["text"])} for d in docs],
-               "citations": [c for r in results for c in r.get("cites", [])],
+               "citations": [dict(c, sha256=sha_by_name.get(c["doc"], "-"))
+                             for r in results for c in r.get("cites", [])],
+               "duplicate_files_excluded": sorted(dup_paths),
                "uncertainties": [f'未覆盖：{m}' for r in results for m in r["missing"]],
                "limitations": ["抽取式回答，仅引用原文", "词法检索可能漏检同义改写", "未命中的子问题不作猜测"],
                "verification": checks}
+    checks["metadata_dimensions_written"] = all(k in dims for k in
+                                                ("file_types", "duplicate_files", "version_differences"))
+    checks["all_passed"] = all(v for k, v in checks.items() if k != "all_passed")
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "status": payload["status"], "docs": len(docs),
                       "chunks": len(chunks), "questions": len(results), "answered": answered,
