@@ -137,7 +137,7 @@ def sentences(text: str) -> list[dict]:
         p = norm(para)
         if not p:
             continue
-        for sidx, sent in enumerate(re.split(r"(?<=[.!?])\s+", p), 1):
+        for sidx, sent in enumerate(re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", p), 1):
             sent = norm(sent)
             if len(sent) >= 25:
                 out.append({"locator": f"p{pno}s{sidx}", "text": sent})
@@ -147,18 +147,23 @@ def sentences(text: str) -> list[dict]:
 # ---------------------------------------------------------------- rules
 
 P_VALUE = re.compile(r"\bp\s*(=|<|>)\s*(0?\.\d+|\d\.\d+)", re.I)
-SIG_CLAIM = re.compile(r"\b(significant\w*|significantly|no difference|not significant)\b", re.I)
+SIG_CLAIM = re.compile(r"\b(significant\w*|significantly|no difference|not significant)\b|"
+                       r"显著|无显著差异|不显著|差异明显", re.I)
 TEST_WORD = re.compile(r"\b(t-test|student'?s t|anova|mann-whitney|wilcoxon|chi-?square|kruskal|"
-                       r"regression|mixed model|linear model|permutation test|bootstrap)\b", re.I)
+                       r"regression|mixed model|linear model|permutation test|bootstrap)\b|"
+                       r"t\s*检验|检验|方差分析|秩和|卡方|回归|混合模型|置换检验|自举", re.I)
 DISPERSION = re.compile(r"(\d+(?:\.\d+)?)\s*(?:±|\+/-|\+-)\s*(\d+(?:\.\d+)?)")
 DISP_WORD = re.compile(r"\b(SD|S\.D\.|standard deviation|SEM|S\.E\.M\.|standard error|"
-                       r"95%\s*CI|confidence interval|IQR|interquartile)\b", re.I)
-SAMPLE = re.compile(r"\bn\s*=\s*(\d+)", re.I)
+                       r"95%\s*CI|confidence interval|IQR|interquartile)\b|"
+                       r"标准差|标准误|置信区间|四分位", re.I)
+SAMPLE = re.compile(r"\bn\s*=\s*(\d+)|样本量\s*(?:为|=|：|:)?\s*(\d+)|(?:共|每组)\s*(\d+)\s*(?:件|例|个)", re.I)
 PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 CORRECTION = re.compile(r"\b(bonferroni|holm|benjamini|hochberg|fdr|tukey|dunnett|sidak|"
-                        r"false discovery|multiple comparison\w* correction|adjust\w* p)\b", re.I)
+                        r"false discovery|multiple comparison\w* correction|adjust\w* p)\b|"
+                        r"多重比较|校正|FDR", re.I)
 COMPARISON = re.compile(r"\b(compared (?:with|to)|versus|vs\.?|higher than|lower than|greater than|"
-                        r"less than|difference between)\b", re.I)
+                        r"less than|difference between)\b|相比|与.{1,8}相比|高于|低于|大于|小于|"
+                       r"组间差异|两组|更高|更低|更大|更小|更多|更少|更强|更弱", re.I)
 UNIT_NUM = re.compile(r"(\d+(?:\.\d+)?)\s*(mm|cm|µm|um|nm|MPa|kPa|GPa|N|kg|mg|mL|L|h|min|days?|weeks?|%)\b")
 
 
@@ -177,7 +182,7 @@ def audit(text: str) -> dict:
     n_tests_named = len(TEST_WORD.findall(text))
     n_comparisons = len(COMPARISON.findall(text))
     has_correction = bool(CORRECTION.search(text))
-    sample_sizes = SAMPLE.findall(text)
+    sample_sizes = [next(g for g in m if g) for m in SAMPLE.findall(text)]
 
     for s in sents:
         t = s["text"]
