@@ -1,0 +1,31 @@
+{
+ "case_id": "EXAMPLE-NOT-A-TEST-CASE",
+ "status": "partial",
+ "editable_source": {
+  "path": "/app/output/figure.svg",
+  "format": "svg"
+ },
+ "export_artifact": {
+  "path": "/app/output/figure.png",
+  "dpi": 200
+ },
+ "content_map": [
+  {
+   "element": "示例元素",
+   "locator": "p1b1"
+  }
+ ],
+ "compliance_checks": [
+  {
+   "rule": "示例规则",
+   "measured": "示例实测值",
+   "pass": true
+  }
+ ],
+ "exceptions": [
+  "示例：做不到的项在此"
+ ],
+ "limitations": [
+  "示例文件，不含正式案例结果"
+ ]
+}
