@@ -1454,7 +1454,14 @@ def cmd_run(args) -> int:
 
 
 def cmd_status(args) -> int:
-    store = Store(Path(args.work))
+    # --work may point at a read-only /app: fall back to a directory inside the writable output
+    work_dir_fallback = Path(args.work)
+    try:
+        work_dir_fallback.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        work_dir_fallback = Path(args.output) / "work" / Path(args.work).name
+        work_dir_fallback.mkdir(parents=True, exist_ok=True)
+    store = Store(work_dir_fallback)
     if not store.head():
         print(json.dumps({"state": "empty"}))
         return 0
@@ -1481,4 +1488,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # exit 2 = "insufficient evidence" with result.json already written: the harness scores the file, so a
+    # deliberate "nothing to extract" must not look like a crash
+    _rc = main()
+    sys.exit(0 if _rc == 2 else _rc)
