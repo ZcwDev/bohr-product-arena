@@ -64,6 +64,58 @@ def norm(t) -> str:
     return re.sub(r"\s+", " ", str(t or "")).strip()
 
 
+def _pure_pdf_text(path) -> list[str]:
+    """Standard-library PDF text reader (last resort when no PDF engine is installed).
+
+    Handles both literal `(...)` and hex `<...>` strings (PyMuPDF writes hex strings inside TJ), turns
+    positioning operators into line breaks, and skips streams that do not decompress.
+    """
+    import zlib
+    try:
+        blob = open(path, "rb").read()
+    except Exception:
+        return []
+    chunks = []
+    for m in re.finditer(rb"stream\r?\n(.*?)endstream", blob, re.S):
+        raw = m.group(1)
+        try:
+            raw = zlib.decompress(raw)
+        except Exception:
+            pass
+        text = raw.decode("latin-1", "replace")
+        if "BT" not in text and "Tj" not in text and "TJ" not in text:
+            continue
+        parts: list[str] = []
+        in_array = False
+        for tok in re.finditer(r"\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]+>|\[|\]|[-+]?\d+(?:\.\d+)?|"
+                               r"\b(?:Tj|TJ|Td|TD|T\*|ET)\b", text):
+            t = tok.group(0)
+            if t == "[":
+                in_array = True
+            elif t == "]":
+                in_array = False
+            elif t.startswith("("):
+                parts.append(t[1:-1].replace("\\(", "(").replace("\\)", ")"))
+            elif t.startswith("<"):
+                hexs = re.sub(r"\s+", "", t[1:-1])
+                try:
+                    parts.append(bytes.fromhex(hexs if len(hexs) % 2 == 0 else hexs + "0")
+                                 .decode("latin-1", "replace"))
+                except Exception:
+                    pass
+            elif t in {"Td", "TD", "T*", "ET"}:
+                parts.append("\n")
+            elif in_array and re.fullmatch(r"[-+]?\d+(?:\.\d+)?", t):
+                try:
+                    if float(t) < -100:
+                        parts.append(" ")
+                except Exception:
+                    pass
+        chunk = "".join(parts).strip()
+        if chunk:
+            chunks.append(chunk)
+    return chunks
+
 def read_doc(p: Path) -> str:
     suf = p.suffix.lower()
     if suf == ".pdf":
@@ -73,9 +125,11 @@ def read_doc(p: Path) -> str:
                 return "\n\n".join(pg.get_text("text") for pg in d)
         except Exception:
             if shutil.which("pdftotext"):
-                return subprocess.run(["pdftotext", "-layout", str(p), "-"], capture_output=True,
-                                      text=True, timeout=180).stdout
-        return ""
+                out = subprocess.run(["pdftotext", "-layout", str(p), "-"], capture_output=True,
+                                     text=True, timeout=180).stdout
+                if out.strip():
+                    return out
+        return "\n\n".join(_pure_pdf_text(str(p)))
     if suf == ".docx":
         with zipfile.ZipFile(p) as z:
             xml = z.read("word/document.xml").decode("utf-8", "replace")
