@@ -34,6 +34,14 @@ from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 
+# --- file metadata layer (rubric: 文件类型 · 元数据字段 · 目录层级 · 重复文件 · 版本差异 · 权限与来源) ---
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
+    from _meta import attach as meta_attach
+except Exception:                        # the engine must still run without the metadata module
+    def meta_attach(inp, out):
+        return {"unavailable": True}
+
 BLOCK_TAGS = {"p", "div", "section", "article", "li", "td", "th", "blockquote", "h1", "h2", "h3", "h4",
               "h5", "h6", "pre", "figcaption", "dd", "dt"}
 DROP_TAGS = {"script", "style", "nav", "footer", "header", "aside", "form", "noscript", "svg", "iframe",
@@ -278,7 +286,9 @@ def main() -> int:
                    "limitations": ["译文由会话内人工/模型逐段填写，术语以 glossary.tsv 为准",
                                    "未翻译段落保留原文，不做机翻填充"],
                    "verification": checks}
-        (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        payload["metadata_coverage"] = meta_attach(inp, out)
+        (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1),
+                                         encoding="utf-8")
         print(json.dumps({"case_id": case_id, "status": payload["status"], "translated": len(pairs),
                           "missing": len(missing), "all_passed": checks["all_passed"]}, ensure_ascii=False))
         return 0
@@ -343,6 +353,7 @@ def main() -> int:
                    "limitations": ["正文抽取用块级标签启发式，长页面可能需要人工核对段落顺序",
                                    "译文尚未生成：本轮只产出可审计的抽取与对齐脚手架"],
                    "verification": checks}
+    payload_out["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload_out, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "segments": len(segs), "glossary": len(gloss),
                       "status": "needs_translation", "all_passed": checks["all_passed"]},
