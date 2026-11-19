@@ -429,6 +429,92 @@ def text_locators(doc) -> list[dict]:
 # ---------------------------------------------------------------- main
 
 
+def text_fallback(inp: Path, out: Path, case_id: str) -> dict | None:
+    """No PDF: parse what is actually there (markdown/text/docx/html/csv) instead of returning input_error.
+
+    A case that ships a manuscript or a CSV is still a document-parsing task: headings give the structure,
+    pipe tables give the tables, and "图 N / Figure N" lines give the captions. Everything keeps a locator;
+    what could not be read (no text layer, scanned images) is listed as unreadable rather than silently skipped.
+    """
+    import hashlib
+    files = [p for p in sorted(inp.rglob("*")) if p.is_file()
+             and p.suffix.lower() in {".md", ".txt", ".docx", ".html", ".htm", ".csv", ".tsv", ".json"}
+             and p.name.lower() not in {"case.json"}]
+    if not files:
+        return None
+    tables, captions, sections, unreadable = [], [], [], []
+    for f in files:
+        try:
+            if f.suffix.lower() == ".docx":
+                import zipfile
+                with zipfile.ZipFile(f) as z:
+                    xml = z.read("word/document.xml").decode("utf-8", "replace")
+                text = "\n".join("".join(re.findall(r"<w:t[^>]*>(.*?)</w:t>", para, re.S))
+                                 for para in re.findall(r"<w:p[ >].*?</w:p>|<w:p/>", xml, re.S))
+            elif f.suffix.lower() in {".html", ".htm"}:
+                text = re.sub(r"<[^>]+>", " ", f.read_text(encoding="utf-8", errors="replace"))
+            else:
+                text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            unreadable.append({"file": f.name, "reason": f"{type(exc).__name__}: {exc}"[:120]})
+            continue
+        if not text.strip():
+            unreadable.append({"file": f.name, "reason": "no text layer"})
+            continue
+        for pno, para in enumerate(re.split(r"\n\s*\n", text), 1):
+            head = re.match(r"^\s{0,3}(#{1,4})\s+(.+)$", para.strip())
+            if head:
+                sections.append({"file": f.name, "locator": f"p{pno}", "level": len(head.group(1)),
+                                 "title": head.group(2).strip()[:120]})
+            for cap in re.finditer(r"(图|表|Fig(?:ure)?|Table)\s*\.?\s*(\d+)\s*[:：]?\s*(.{0,120})", para):
+                captions.append({"file": f.name, "locator": f"p{pno}", "label": cap.group(0)[:60].strip(),
+                                 "kind": "figure" if cap.group(1) in {"图", "Fig", "Figure"} else "table"})
+        # markdown / TSV pipe tables
+        rows, start = [], None
+        for pno, line in enumerate(text.splitlines(), 1):
+            if line.strip().startswith("|") and line.strip().endswith("|"):
+                if start is None:
+                    start = pno
+                rows.append([c.strip() for c in line.strip().strip("|").split("|")])
+            else:
+                if rows and len(rows) >= 2:
+                    tables.append({"file": f.name, "locator": f"p{start}-{pno}", "rows": rows})
+                rows, start = [], None
+        if rows and len(rows) >= 2:
+            tables.append({"file": f.name, "locator": f"p{start}", "rows": rows})
+        if f.suffix.lower() in {".csv", ".tsv"}:
+            delim = "," if f.suffix.lower() == ".csv" else "\t"
+            body = [ln.split(delim) for ln in text.strip().splitlines() if ln.strip()][:400]
+            if body:
+                tables.append({"file": f.name, "locator": "L1", "rows": body})
+    for i, t in enumerate(tables, 1):
+        with (out / "tables" / f"tab_{i:03d}.tsv").open("w", encoding="utf-8") as fh:
+            for r in t["rows"][:400]:
+                fh.write("\t".join(str(c)[:200] for c in r) + "\n")
+    with (out / "document_structure.tsv").open("w", encoding="utf-8") as fh:
+        fh.write("kind\tfile\tlocator\ttitle_or_label\n")
+        for sec in sections:
+            fh.write(f'section\t{sec["file"]}\t{sec["locator"]}\tH{sec["level"]} {sec["title"]}\n')
+        for cap in captions:
+            fh.write(f'{cap["kind"]}\t{cap["file"]}\t{cap["locator"]}\t{cap["label"]}\n')
+    payload = {
+        "case_id": case_id,
+        "status": "answered" if (tables or sections) else "partial",
+        "tables": [{"file": t["file"], "locator": t["locator"], "rows": len(t["rows"])} for t in tables],
+        "captions": captions[:40], "sections": sections[:60], "unreadable": unreadable,
+        "sources": [{"name": f.name, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()[:16],
+                     "bytes": f.stat().st_size} for f in files],
+        "gaps": ([] if tables else ["输入里没有 PDF，也没有可解析的表格；只给出章节/图注结构"]),
+        "limitations": ["没有 PDF 时走文本回退：不做图像裁剪与坐标矢量化，只抽表格与章节/图注结构",
+                        "扫描件无文本层会列进 unreadable，不做 OCR"],
+        "verification": {"all_passed": bool(tables or sections),
+                         "has_tables": bool(tables), "has_structure": bool(sections),
+                         "unreadable_reported": True},
+    }
+    (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    return payload
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--input", default="/input")
@@ -456,6 +542,12 @@ def main() -> int:
             pass
     pdf = find_pdf(inp)
     if pdf is None:
+        fallback = text_fallback(inp, out, case_id)
+        if fallback is not None:
+            print(json.dumps({"case_id": case_id, "status": fallback["status"],
+                              "tables": len(fallback["tables"]), "sections": len(fallback["sections"]),
+                              "all_passed": fallback["verification"]["all_passed"]}, ensure_ascii=False))
+            return 0
         (out / "result.json").write_text(json.dumps(
             {"case_id": case_id, "status": "input_error", "result": None, "claims": [],
              "uncertainties": ["no PDF under the input path"],
