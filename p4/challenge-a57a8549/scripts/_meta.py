@@ -21,6 +21,7 @@ import json
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 
 VER_TOKENS = re.compile(r"(?:[_\-\s]?(?:v|ver|version|rev|r|final|draft|copy|副本|终版|修改)(\d{0,3})"
@@ -165,10 +166,37 @@ def write_tsv(path: Path, rows: list[dict]) -> None:
             fh.write("\t".join(str(r.get(c, "")) for c in cols) + "\n")
 
 
+def reproduce(inp: Path, out: Path, rows: list[dict]) -> dict:
+    """What someone else needs in order to walk the same run again — argv, versions, hashes."""
+    argv = list(sys.argv)
+    manifest = {
+        "command": " ".join(argv),
+        "engine": Path(argv[0]).name if argv else "-",
+        "python": sys.version.split()[0],
+        "cwd_free": True,
+        "params": {a: b for a, b in zip(argv[1::2], argv[2::2]) if a.startswith("--")} if len(argv) > 2 else {},
+        "input": [{"path": r["path"], "sha256": r["sha256"], "bytes": r["bytes"]} for r in rows],
+        "input_digest": hashlib.sha256("".join(sorted(r["sha256"] for r in rows)).encode()).hexdigest()[:16],
+        "started_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "outputs": [],
+    }
+    (out / "repro_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1),
+                                             encoding="utf-8")
+    # fill output hashes after the run by re-reading the directory (cheap: outputs are small text)
+    for f in sorted(out.iterdir()):
+        if f.is_file() and f.name != "repro_manifest.json":
+            manifest["outputs"].append({"path": f.name, "sha256": sha(f), "bytes": f.stat().st_size})
+    (out / "repro_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1),
+                                             encoding="utf-8")
+    return {"repro_manifest": "repro_manifest.json", "input_digest": manifest["input_digest"],
+            "outputs_recorded": len(manifest["outputs"])}
+
+
 def attach(inp: Path, out: Path) -> dict:
-    """Write inventory.tsv and return the six-dimension summary for result.json."""
+    """Write inventory.tsv (+ a reproduction manifest) and return the six-dimension summary."""
     rows = inventory(inp, inp / "case.json")
     write_tsv(out / "inventory.tsv", rows)
     dims = six_dimensions(rows)
     dims["files"] = len(rows)
+    dims["reproduce"] = reproduce(inp, out, rows)
     return dims
