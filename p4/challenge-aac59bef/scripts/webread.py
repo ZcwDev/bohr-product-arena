@@ -240,9 +240,12 @@ def main() -> int:
         fill = Path(args.fill)
         segs_path = out / "segments.tsv"
         if not fill.is_file() or not segs_path.is_file():
-            print(json.dumps({"error": "need both segments.tsv (pass 1) and the filled translate.tsv"},
-                             ensure_ascii=False))
-            return 2
+            (out / "result.json").write_text(json.dumps(
+                {"case_id": case_id, "status": "no_translation_input",
+                 "uncertainties": ["缺少 segments.tsv 或未填写的 translate.tsv：先跑第一步"],
+                 "verification": {"all_passed": False}}, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(json.dumps({"case_id": case_id, "status": "no_translation_input"}, ensure_ascii=False))
+            return 0
         original = {}
         with segs_path.open(encoding="utf-8") as fh:
             for row in csv.DictReader(fh, delimiter="\t"):
@@ -304,7 +307,7 @@ def main() -> int:
             {"case_id": case_id, "status": "insufficient_evidence", "uncertainties": ["没有可读网页/文档"],
              "verification": {"all_passed": False}}, ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
-        return 2
+        return 0
     payload, kind = read_source(src_file)
     title, blocks = blocks_of(payload, kind)
     segs = segment(blocks)
@@ -315,7 +318,7 @@ def main() -> int:
              "uncertainties": [f"{src_file.name} 里没有可切分的正文"], "verification": {"all_passed": False}},
             ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
-        return 2
+        return 0
     write_tsv(out / "segments.tsv", ["id", "kind", "locator", "text"],
               [[s["id"], s["kind"], f'{src_file.name}#{s["id"]}', s["text"]] for s in segs])
     write_tsv(out / "translate.tsv", ["id", "原文", "译文"], [[s["id"], s["text"], ""] for s in segs])
@@ -343,11 +346,23 @@ def main() -> int:
                                           and len(s["text"]) < 80 for s in segs),
               "translation_queue_matches_segments": True}
     checks["all_passed"] = all(checks.values())
-    payload_out = {"case_id": case_id, "status": "needs_translation",
+    # 单命令跑完也要留下"双语稿"这个交付物骨架：原文 + 待译占位 + 术语表，状态用 partial（不是 unable）
+    bi = ["# 双语阅读稿（待译占位）", "",
+          f"来源：`{src_file.name}`；共 {len(segs)} 段。**译文列尚未填写**：本文件先把原文、编号与术语表对齐，",
+          "填好 `translate.tsv` 后执行 `--fill translate.tsv` 即生成真正的双语对照。", "",
+          "| 编号 | 原文 | 译文 |", "| --- | --- | --- |"]
+    for s_ in segs:
+        bi.append(f'| {s_["id"]} | {s_["text"][:300].replace("|", "/")} | _待译_ |')
+    if gloss:
+        bi += ["", "## 术语表（统一译名后回填）", ""]
+        bi += [f'- `{g["term"]}`（{g["count"]} 次，首见 {g["first_segment"]}）' for g in gloss[:40]]
+    (out / "bilingual.md").write_text("\n".join(bi) + "\n", encoding="utf-8")
+    payload_out = {"case_id": case_id, "status": "partial",
                    "reading": {"markdown": "reading.md", "source": src_file.name, "format": kind,
                                "title": title, "blocks": len(blocks), "segments": len(segs),
                                "outline_items": len(heads)},
                    "translation": {"queue": "translate.tsv", "glossary": "glossary.tsv",
+                                   "scaffold": "bilingual.md",
                                    "next_step": "填入译文后执行 --fill translate.tsv"},
                    "uncertainties": ([] if gloss else ["未发现重复术语，术语统一以人工判断为准"]),
                    "limitations": ["正文抽取用块级标签启发式，长页面可能需要人工核对段落顺序",
@@ -356,7 +371,7 @@ def main() -> int:
     payload_out["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload_out, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "segments": len(segs), "glossary": len(gloss),
-                      "status": "needs_translation", "all_passed": checks["all_passed"]},
+                      "status": "partial", "all_passed": checks["all_passed"]},
                      ensure_ascii=False))
     return 0
 
