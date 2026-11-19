@@ -38,20 +38,21 @@ except Exception:                        # the engine must still run without the
 
 NUM = re.compile(r"(?<![0-9.])(\d+(?:\.\d+)?)\s*(mm/min|mm/s|%/min|°C|MPa|kPa|GPa|mL|min|days?|weeks?|"
                  r"rpm|Hz|mm|cm|µm|um|nm|kg|mg|g|L|h|s|V|A|W|%|N)(?![A-Za-z])")
-HYPO = re.compile(r"\b(hypothes\w+|we (?:expect|aim|propose|predict|test)|objective|goal|aim of)\b", re.I)
+HYPO = re.compile(r"\b(hypothes\w+|we (?:expect|aim|propose|predict|test)|objective|goal|aim of)\b|假设|推测|预期|旨在|目标是|拟验证", re.I)
 INDEP = re.compile(r"\b(at (?:different|various) [a-z ]{3,40}|vary\w*|varying|levels? of [a-z ]{3,30}|"
-                   r"three (?:groups|arms)|two (?:groups|arms))\b", re.I)
+                   r"three (?:groups|arms)|two (?:groups|arms))\b|不同(?:的)?[\w\u4e00-\u9fff]{2,8}"
+                   r"|(?:三|两|四)组|梯度|对照(?:组|条件)", re.I)
 DEP = re.compile(r"\b(measur\w+|assess\w+|evaluat\w+|outcome|strength|stiffness|yield|viability|"
                  r"concentration|temperature|rate)\b", re.I)
 CONTROL = re.compile(r"\b(control (?:group|samples?|condition)|vehicle|placebo|sham|untreated|"
-                     r"baseline|as-received)\b", re.I)
+                     r"baseline|as-received)\b|对照组|空白对照|未处理|基线", re.I)
 STEP = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+(.{20,})")
 RISK = re.compile(r"\b(risk|hazard|toxic\w*|corrosiv\w*|flammab\w*|high[- ]voltage|high[- ]temperature|"
-                  r"contaminat\w*|bias|confound\w*|safety|危险|风险|有毒|易燃|高温|污染)\b", re.I)
+                  r"contaminat\w*|bias|confound\w*|safety)\b|危险|风险|有毒|易燃|高温|污染|偏差|干扰", re.I)
 CRITERION = re.compile(r"\b(p\s*[<>=]\s*0?\.\d+|significan\w+|threshold|criteria|accept\w*|"
-                       r"consider\w* (?:successful|acceptable))\b", re.I)
+                       r"consider\w* (?:successful|acceptable))\b|判据|判定|阈值|显著性|误差小于|偏差", re.I)
 EQUIP = re.compile(r"\b(Instron|MTS|Stratasys|FDM printer|microscope|centrifuge|spectrometer|"
-                   r"balance|oven|incubator|laser|sensor)\b", re.I)
+                   r"balance|oven|incubator|laser|sensor)\b|扫描仪|试验机|打印机|烘箱|炉|显微镜|离心机", re.I)
 
 
 def norm(t) -> str:
@@ -99,7 +100,7 @@ def sentences(text: str) -> list[dict]:
     for pno, para in enumerate(re.split(r"\n\s*\n", text), 1):
         p = norm(para)
         # only treat "word." / "word!" as a sentence end; "1." is an enumerator, not a boundary
-        for sidx, s in enumerate(re.split(r"(?<=[A-Za-z\)\]%][.!?])\s+", p), 1):
+        for sidx, s in enumerate(re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]%][.!?])\s+", p), 1):
             s = norm(s)
             if len(s) >= 25:
                 out.append({"locator": f"p{pno}s{sidx}", "text": s})
@@ -114,7 +115,9 @@ def build(text: str) -> dict:
         if HYPO.search(t):
             hypos.append({"claim": t[:300], "locator": loc})
         if INDEP.search(t):
-            indep.append({"name": INDEP.search(t).group(1), "statement": t[:240], "locator": loc})
+            m_ind = INDEP.search(t)
+            indep.append({"name": (m_ind.group(1) or m_ind.group(0)).strip(),
+                          "statement": t[:240], "locator": loc})
         if re.search(r"\b(measur\w+|assess\w+|evaluat\w+)\b", t, re.I):
             m_named = (re.search(r"\bas the ([\w\- ]{3,40}?)[.,;]", t)
                        or re.search(r"the ([\w\- ]{3,40}?) (?:was|were|is|are) "
@@ -122,13 +125,17 @@ def build(text: str) -> dict:
             name = m_named.group(1).strip() if m_named else DEP.search(t).group(1)
             deps.append({"name": name, "statement": deenum(t)[:240], "locator": loc})
         if CONTROL.search(t):
-            controls.append({"name": CONTROL.search(t).group(1), "statement": t[:240], "locator": loc})
+            m_c = CONTROL.search(t)
+            controls.append({"name": (m_c.group(1) or m_c.group(0)).strip(),
+                             "statement": t[:240], "locator": loc})
         m_step = STEP.match(t)
         if m_step:
             steps.append({"order": len(steps) + 1, "step": deenum(norm(m_step.group(1)))[:240],
                           "locator": loc})
         elif re.search(r"\b(we (?:printed|prepared|mixed|tested|measured|performed)|was (?:printed|prepared|"
-                       r"measured|performed))\b", t, re.I):
+                       r"measured|performed))\b|采用|制备|打印|测量|测试|记录|设置|调整|加载|保温|冷却|"
+                       r"取样|称量", t, re.I) and not re.match(
+                r"^(假设|推测|预期|判据|判定|风险|变量|对照|自变量|因变量|指标|依据|说明)", t):
             steps.append({"order": len(steps) + 1, "step": t[:240], "locator": loc})
         seen_p = set()
         for m in NUM.finditer(t):
@@ -138,12 +145,15 @@ def build(text: str) -> dict:
             seen_p.add(key)
             params.append({"value": m.group(1), "unit": m.group(2), "statement": t[:200], "locator": loc})
         if RISK.search(t):
-            risks.append({"cue": RISK.search(t).group(1), "statement": t[:240], "locator": loc,
+            risks.append({"cue": RISK.search(t).group(1) or RISK.search(t).group(0), "statement": t[:240],
+                          "locator": loc,
                           "mitigation": "在方法中写明该风险的处置（如防护、限值、重复测量）并交人工确认"})
         if CRITERION.search(t):
-            crits.append({"criterion": CRITERION.search(t).group(1), "statement": t[:240], "locator": loc})
+            m_cr = CRITERION.search(t)
+            crits.append({"criterion": m_cr.group(1) or m_cr.group(0), "statement": t[:240], "locator": loc})
         if EQUIP.search(t):
-            equip.append({"name": EQUIP.search(t).group(1), "statement": t[:200], "locator": loc})
+            m_eq = EQUIP.search(t)
+            equip.append({"name": m_eq.group(1) or m_eq.group(0), "statement": t[:200], "locator": loc})
     # confirmations are never asserted: each is an item the experimenter must confirm
     confirmations = [
         {"item": "安全", "status": "needs_confirmation",
@@ -234,7 +244,7 @@ def main() -> int:
              "confirmations": [{"item": "材料", "status": "needs_confirmation",
                                 "detail": "没有可读的方法材料"}], "verification": {"all_passed": False}},
             ensure_ascii=False, indent=1), encoding="utf-8")
-        return 2
+        return 0
     rep = build(text)
     def dump(name: str, header: list[str], rows: list[dict], keys: list[str]) -> None:
         with (out / name).open("w", encoding="utf-8") as fh:
@@ -288,7 +298,8 @@ def main() -> int:
         "no_invented_step": all(s["locator"] for s in rep["steps"]),
     }
     checks["all_passed"] = all(checks.values())
-    payload = {"case_id": case_id, "status": "answered",
+    empty = not (rep["hypotheses"] or rep["steps"] or rep["parameters"])
+    payload = {"case_id": case_id, "status": "insufficient_evidence" if empty else "answered",
                "plan": {"primary": "plan.docx", "markdown": "plan.md",
                         "hypotheses": len(rep["hypotheses"]), "variables": len(rep["independent"])
                         + len(rep["dependent"]), "controls": len(rep["controls"]),
@@ -297,6 +308,9 @@ def main() -> int:
                "evidence_and_risk": {"files": ["variables.tsv", "parameters.tsv", "steps.tsv", "risks.tsv"],
                                      "risks": len(rep["risks"])},
                "confirmations": rep["confirmations"],
+               "gaps": ([g for g, ok in (("材料里没有明确的假设句", bool(rep["hypotheses"])),
+                                         ("材料里没有可识别的步骤", bool(rep["steps"])),
+                                         ("材料里没有带单位的参数", bool(rep["parameters"]))) if not ok]),
                "sources": [{"name": source}],
                "uncertainties": [f'{c["item"]}：{c["detail"]}' for c in rep["confirmations"]
                                  if c["status"] == "needs_confirmation"],
