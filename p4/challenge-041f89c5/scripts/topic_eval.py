@@ -38,6 +38,7 @@ from pathlib import Path
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
     from _meta import attach as meta_attach
+    from _render import maybe_pdf
 except Exception:                        # the engine must still run without the metadata module
     def meta_attach(inp, out):
         return {"unavailable": True}
@@ -266,7 +267,7 @@ def main() -> int:
              "uncertainties": ["材料里没有可评估的选题" if docs else "没有可读材料"],
              "verification": {"all_passed": False}}, ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
-        return 2
+        return 0
     evals = [evaluate(c, docs) for c in cands]
     evals.sort(key=lambda e: -e["total"])
     with (out / "topics.tsv").open("w", encoding="utf-8") as fh:
@@ -347,6 +348,10 @@ def main() -> int:
                "limitations": ["新颖性为材料内相似度，非全领域查新", "可行性反映材料支撑度而非现实可行性",
                                "排序为算术结果"],
                "verification": checks}
+    _pdf = maybe_pdf(out / "eval.md", out)
+    payload["pdf"] = _pdf
+    if not _pdf.get("pdf"):
+        payload.setdefault("gaps", []).append("未产出 PDF：" + str(_pdf.get("reason"))[:120])
     payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "topics": len(evals), "top": evals[0]["topic"][:40],
