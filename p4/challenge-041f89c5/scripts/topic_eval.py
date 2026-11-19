@@ -34,6 +34,14 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
+# --- file metadata layer (rubric: 文件类型 · 元数据字段 · 目录层级 · 重复文件 · 版本差异 · 权限与来源) ---
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script dir from sys.path
+    from _meta import attach as meta_attach
+except Exception:                        # the engine must still run without the metadata module
+    def meta_attach(inp, out):
+        return {"unavailable": True}
+
 CJK = re.compile(r"[\u4e00-\u9fff]+")
 WORD = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,}")
 STOP = set("""the and for with from this that these those were was are has have been study studies results
@@ -339,6 +347,7 @@ def main() -> int:
                "limitations": ["新颖性为材料内相似度，非全领域查新", "可行性反映材料支撑度而非现实可行性",
                                "排序为算术结果"],
                "verification": checks}
+    payload["metadata_coverage"] = meta_attach(inp, out)
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "topics": len(evals), "top": evals[0]["topic"][:40],
                       "all_passed": checks["all_passed"]}, ensure_ascii=False))
