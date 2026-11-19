@@ -104,7 +104,7 @@ def collect(root: Path) -> tuple[list[dict], list[str]]:
                 if not para_lines:
                     return
                 joined = norm(" ".join(para_lines))
-                for sent in re.split(r"(?<=[.!?])\s+", joined):
+                for sent in re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", joined):
                     if len(sent) < 40:
                         continue
                     sidx += 1
