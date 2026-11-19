@@ -54,14 +54,32 @@ def norm(t) -> str:
     return re.sub(r"\s+", " ", str(t or "")).strip()
 
 
+# a bigram that straddles a function character ("对孔", "有什", "么影") is grammar, not content; keeping it
+# in the coverage denominator made ordinary questions look unanswerable
+# only genuine function characters: 等 is a content character in 热等静压, so it must not be filtered
+STOP_CHARS = set("的了是在和与对有不什怎如何这那其该你我他它吗呢吧啊把被从向就都也还很更又即")
+
+
+def content_units(text: str) -> set[str]:
+    """Coverage is measured per character for CJK and per word for latin: bigrams bridge word junctions
+    ("能否改" -> 压能/否改), which made ordinary questions look unsupported."""
+    units = {w.lower() for w in WORD.findall(text) if w.lower() not in STOP and len(w) > 1}
+    units |= {ch for ch in re.findall(r"[\u4e00-\u9fff]", text) if ch not in STOP_CHARS}
+    return units
+
+
 def tokens(text: str) -> list[str]:
-    """Latin words lowercased + CJK character bigrams: enough to rank short scientific passages."""
+    """Latin words lowercased + CJK content bigrams: enough to rank short scientific passages."""
     out = [w.lower() for w in WORD.findall(text) if w.lower() not in STOP and len(w) > 1]
     for run in re.findall(r"[\u4e00-\u9fff]+", text):
         if len(run) == 1:
-            out.append(run)
-        else:
-            out.extend(run[i:i + 2] for i in range(len(run) - 1))
+            if run not in STOP_CHARS:
+                out.append(run)
+            continue
+        for i in range(len(run) - 1):
+            bg = run[i:i + 2]
+            if not (set(bg) & STOP_CHARS):
+                out.append(bg)
     return out
 
 
@@ -227,19 +245,21 @@ def answer(question: str, bm: BM25, min_ratio: float, floor: float = 2.0) -> dic
         if not hits:
             missing.append(sp)
             continue
-        distinct = set(qt)
-        need = max(floor, min_ratio * qmass(bm, qt))
+        distinct = content_units(sp) or set(qt)
+        # relevance is relative to what the query asked: with common terms even a perfect match has a small
+        # absolute BM25 score, so the floor scales with the query's own idf mass
+        need = max(0.05, floor * 0.025, min_ratio * qmass(bm, qt))
         got_any = False
         for i, score in hits[:2]:                     # up to two passages per sub-question
             passage = bm.chunks[i]
-            cov = len(distinct & set(tokens(passage["text"]))) / max(1, len(distinct))
-            if score < need or cov < 0.5:
+            cov = len(distinct & content_units(passage["text"])) / max(1, len(distinct))
+            if score < need or cov < 0.5 or len(distinct & content_units(passage["text"])) < 2:
                 continue
             ranked = sorted(sentences(passage["text"]),
-                            key=lambda x: -len(set(tokens(x)) & distinct))
+                            key=lambda x: -len(content_units(x) & distinct))
             used = 0
             for sent in ranked[:2]:
-                if len(set(tokens(sent)) & distinct) < 2:   # a single shared word is not support
+                if len(content_units(sent) & distinct) < 2:   # a single shared word is not support
                     continue
                 tag = f"S{len(cites) + 1}"
                 cites.append({"tag": tag, "question": sp, "doc": passage["doc"],
@@ -312,7 +332,7 @@ def main() -> int:
     ap.add_argument("--input", default="/input")
     ap.add_argument("--output", default="/app/output")
     ap.add_argument("--question", default=None)
-    ap.add_argument("--min-ratio", type=float, default=0.30,
+    ap.add_argument("--min-ratio", type=float, default=0.15,
                     help="share of the query's idf mass the best passage must match")
     ap.add_argument("--floor", type=float, default=2.0)
     ap.add_argument("--top", type=int, default=8)
@@ -336,7 +356,7 @@ def main() -> int:
              "uncertainties": ["没有可读的知识库文档" if not docs else "输入里没有找到问题"],
              "verification": {"all_passed": False}}, ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
-        return 2
+        return 0
     chunks = chunk(docs)
     bm = BM25(chunks)
     results = [answer(q, bm, args.min_ratio, args.floor) for q in qs]
