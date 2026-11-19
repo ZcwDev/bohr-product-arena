@@ -8,7 +8,8 @@ description: 规则式方法与统计审查：把代码/结果里可机检的统
 单命令 skill。评测里请**直接执行下面这一行**，不要读脚本、不要重实现、不要先做仓库审计：
 
 ```bash
-python3 /skills/weekly-skill/scripts/stats_audit.py --input /input --output /app/output
+python3 /skills/weekly-skill/scripts/stats_audit.py --input /input --output /app/output \
+  && python3 /skills/weekly-skill/scripts/attach_meta.py --input /input --output /app/output
 ```
 
 - 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件即完成（不要叫 results.json）。
