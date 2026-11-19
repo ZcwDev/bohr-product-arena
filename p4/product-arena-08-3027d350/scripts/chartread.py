@@ -65,56 +65,56 @@ def _pdftotext_pages(path) -> list[str]:
 
 
 def _pure_pdf_text(path) -> list[str]:
-    """Last-resort text extraction with the standard library only.
+    """Standard-library PDF text reader (last resort when no PDF engine is installed).
 
-    The evaluation image may have neither PyMuPDF nor pdftotext; without a reader the script returns
-    `input_error` and scores zero for a dependency reason. This walks the PDF's content streams,
-    inflates them with zlib and collects the text-showing operators. Kerning offsets inside a TJ array
-    that exceed ~0.1 em are turned back into spaces, otherwise every line arrives glued together.
+    Handles both literal `(...)` and hex `<...>` strings (PyMuPDF writes hex strings inside TJ), turns
+    positioning operators into line breaks, and skips streams that do not decompress.
     """
-    import re as _re, zlib as _zlib
+    import zlib
     try:
         blob = open(path, "rb").read()
     except Exception:
         return []
-    TOKEN = _re.compile(r"\((?:[^()\\]|\\.)*\)|\[|\]|[-+]?\d+(?:\.\d+)?")
     chunks = []
-    for m in _re.finditer(rb"stream\r?\n(.*?)endstream", blob, _re.S):
+    for m in re.finditer(rb"stream\r?\n(.*?)endstream", blob, re.S):
         raw = m.group(1)
         try:
-            raw = _zlib.decompress(raw)
+            raw = zlib.decompress(raw)
         except Exception:
             pass
         text = raw.decode("latin-1", "replace")
-        parts = []
+        if "BT" not in text and "Tj" not in text and "TJ" not in text:
+            continue
+        parts: list[str] = []
         in_array = False
-        for t in TOKEN.finditer(text):
-            tok = t.group(0)
-            if tok == "[":
+        for tok in re.finditer(r"\((?:[^()\\]|\\.)*\)|<[0-9A-Fa-f\s]+>|\[|\]|[-+]?\d+(?:\.\d+)?|"
+                               r"\b(?:Tj|TJ|Td|TD|T\*|ET)\b", text):
+            t = tok.group(0)
+            if t == "[":
                 in_array = True
-                continue
-            if tok == "]":
+            elif t == "]":
                 in_array = False
-                continue
-            if tok.startswith("("):
-                parts.append(tok[1:-1])
-                continue
-            if in_array:
+            elif t.startswith("("):
+                parts.append(t[1:-1].replace("\\(", "(").replace("\\)", ")"))
+            elif t.startswith("<"):
+                hexs = re.sub(r"\s+", "", t[1:-1])
                 try:
-                    if float(tok) < -100:
+                    parts.append(bytes.fromhex(hexs if len(hexs) % 2 == 0 else hexs + "0")
+                                 .decode("latin-1", "replace"))
+                except Exception:
+                    pass
+            elif t in {"Td", "TD", "T*", "ET"}:
+                parts.append("\n")
+            elif in_array and re.fullmatch(r"[-+]?\d+(?:\.\d+)?", t):
+                try:
+                    if float(t) < -100:
                         parts.append(" ")
                 except Exception:
                     pass
-        if parts:
-            joined = "".join(parts)
-            joined = (joined.replace("\\(", "(").replace("\\)", ")").replace("\\\\", "\\")
-                            .replace("\\n", " ").replace("\\r", " ").replace("\\t", " "))
-            chunks.append(joined)
-    if not chunks:
-        return []
-    text = "\n\n".join(chunks)
-    return text.split("\f") or [text]
-
+        chunk = "".join(parts).strip()
+        if chunk:
+            chunks.append(chunk)
+    return chunks
 
 def _fitz():
     try:
