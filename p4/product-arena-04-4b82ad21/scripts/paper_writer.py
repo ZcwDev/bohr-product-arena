@@ -270,12 +270,61 @@ def docx_bytes(title: str, sections: dict[str, list[dict]], sources: list[dict])
     return buf.getvalue()
 
 
+
+def verify_draft(draft: Path, evidence: Path, out: Path) -> int:
+    """Gate for the agent-written draft: structure, citations and numbers must be traceable to the evidence table.
+
+    契约：第二步由 agent 用自己的模型写 `draft.md`，但**每一段都要有引用或数值**，且所有数字必须能在
+    `claim_source_map.tsv`（第一步产出的证据表）里找到；缺哪一段、哪个数字没有来源，逐条列出。
+    """
+    text = draft.read_text(encoding="utf-8", errors="replace") if draft.is_file() else ""
+    ev = evidence.read_text(encoding="utf-8", errors="replace") if evidence.is_file() else ""
+    # 中英双语的章节名都要认（只认英文会把整篇中文稿判成"六节全缺"）
+    ALIAS = {"abstract": ("abstract", "summary", "摘要", "内容提要"),
+             "introduction": ("introduction", "background", "引言", "前言", "绪论"),
+             "methods": ("method", "materials and methods", "方法", "材料与方法", "实验部分", "实验方法"),
+             "results": ("result", "结果", "实验结果"),
+             "discussion": ("discussion", "讨论", "分析与讨论"),
+             "conclusion": ("conclusion", "结论", "总结")}
+    heads = [h.strip().lower() for h in re.findall(r"^#{1,4}\s+(.+)$", text, re.M)]
+    missing = [k for k, al in ALIAS.items() if not any(a in h for h in heads for a in al)]
+    present = [k for k in ALIAS if k not in missing]
+    nums_missing = []
+    for m in re.finditer(r"(?<![\w.])(\d+(?:\.\d+)?)\s*(%|°C|µm|mm|MPa|h|min|倍|件|例)?", text):
+        token = m.group(0).strip()
+        if len(token) < 2:
+            continue
+        if token not in ev and m.group(1) not in ev:
+            nums_missing.append(token)
+    paras = [x.strip() for x in re.split(r"\n\s*\n", text) if x.strip() and not x.strip().startswith("#")]
+    unsupported = [x[:60] for x in paras if not (CITE.search(x) if "CITE" in globals() else re.search(r"\[\d+\]|\[R\d+\]", x))
+                   and not re.search(r"\d", x)]
+    checks = {
+        "all_sections_present": not missing,
+        "every_paragraph_supported": not unsupported,
+        "numbers_traceable": not nums_missing,
+        "draft_nonempty": len(text) > 800,
+    }
+    checks["all_passed"] = all(checks.values())
+    report = {"checks": checks, "missing_sections": missing,
+              "paragraphs_without_citation_or_number": unsupported[:10],
+              "numbers_not_in_evidence": sorted(set(nums_missing))[:10], "chars": len(text)}
+    (out / "draft_check.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if checks["all_passed"] else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default="/input")
     ap.add_argument("--output", default="/app/output")
     ap.add_argument("--title", default="Manuscript")
+    ap.add_argument("--verify-draft", default=None,
+                    help="check an agent-written draft against the evidence table (exit 1 if it fails)")
     args = ap.parse_args()
+    if args.verify_draft:
+        out = Path(args.output); out.mkdir(parents=True, exist_ok=True)
+        return verify_draft(Path(args.verify_draft), out / "claim_source_map.tsv", out)
     inp, out = Path(args.input), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
     case_id = "unreported"
