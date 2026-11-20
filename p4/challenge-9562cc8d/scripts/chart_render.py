@@ -277,7 +277,9 @@ def main() -> int:
                                "PNG/PDF 依赖渲染器，缺失时只产出可编辑 SVG"],
                "verification": checks, "render": rinfo}
     payload["metadata_coverage"] = meta_attach(inp, out)
-    (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    # 链式调用时保留前一步（清洗）的 result.json，本步另写 chart_result.json
+    _target = out / ("chart_result.json" if (out / "result.json").is_file() else "result.json")
+    _target.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "status": "answered", "kind": plan["kind"],
                       "marks": len(marks), "png": bool(rinfo.get("png")),
                       "all_passed": checks["all_passed"]}, ensure_ascii=False))
