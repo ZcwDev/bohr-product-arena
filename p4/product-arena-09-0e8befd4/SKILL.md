@@ -1,16 +1,18 @@
 ---
 name: product_arena_09_0e8befd4
-description: Nanopublication：把阅读结论写成可核验断言——每条断言含主张、判定（supported/contradicted/insufficient）、逐字引文与定位、简短依据说明。
+description: Nanopublication：三段式——脚本抽可定位块→（模型）写主张/判定/逐字引文→脚本门禁校验并出审计；每条断言含主张、判定（supported/contradicted/insufficient）、引文、定位与依据。
 ---
 
 ## 立刻执行（不要探索）
 
-单命令 skill。评测里请**直接执行下面这一行**，不要读脚本、不要重实现、不要先做仓库审计：
+评测里**直接执行这一行**，不要读脚本、不要重实现、不要先做仓库审计：
 
 ```bash
-python3 /skills/weekly-skill/scripts/claim_audit.py --input /input --output /app/output \
-  && python3 /skills/weekly-skill/scripts/attach_meta.py --input /input --output /app/output
+python3 /skills/weekly-skill/scripts/claim_audit.py --input /input --output /app/output --run-all
 ```
+
+`--run-all` = 写 `blocks.tsv` → 有 `nanopubs.json` 且过门禁就用它、否则退回脚本推导断言 → 出 `audit.json`
+→ `attach_meta`。三步也可单独跑：`--blocks` / `--verify-nanopubs out/nanopubs.json`。
 
 - 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件即完成（不要叫 results.json）。
 - **`case_id` 只能从 `/input/case.json` 逐字复制**；自编号一律判 0。
@@ -22,6 +24,50 @@ python3 /skills/weekly-skill/scripts/claim_audit.py --input /input --output /app
 
 Nanopublication：把阅读结论写成可核验断言——每条断言含主张、判定（supported/contradicted/insufficient）、逐字引文与定位、简短依据说明。
 
-产物见下方表格（`result.json` 里 `files` 字段逐项列出）；六维文件元数据在 `inventory.tsv`，复跑信息在 `repro_manifest.json`。
+## 三段式怎么用（有模型时，判定质量来自这一步）
+
+**第一步 · 脚本抽块** → `/app/output/blocks.tsv`
+
+每行 `locator · chars · text`。有 `corpus.json` 时 `locator` 是 `文档#小节`（audit 的 `evidence` 认这个格式），
+否则是 `文件名#pN`（第 N 段）。脚本不做语义判断；同一命令已产出一版推导断言作底稿。
+
+**第二步 · 模型写 `nanopubs.json`**
+
+```json
+{"claims": [{"claim_id": "N01",
+             "claim": "热处理可显著提高疲劳寿命",
+             "verdict": "supported",
+             "quote": "热处理组的疲劳寿命明显更高",
+             "locator": "manuscript.md#p3",
+             "rationale": "证据段给出的热处理组循环数高一倍，且无否定表述"}]}
+```
+
+| 约束 | 值（第三步逐条校验） |
+|---|---|
+| `verdict` | 只能是 `supported / contradicted / insufficient` |
+| `quote` | 在 `blocks.tsv` 的 text 里**逐字存在**（忽略空白）；改写过的引文按无证据计 |
+| `locator` | **从 `blocks.tsv` 复制**；编造的定位会被拦下 |
+| `rationale` | ≥20 字，写清"哪个数值/表述支持它" |
+| 数量 | ≥3 条；一篇文章通常 5–12 条，覆盖摘要/结果/结论，别只挑同义句 |
+
+判定口径：`supported`=引文数据与主张一致且无否定；`contradicted`=引文给出相反结论或不同数值（含被修订/撤稿段落）；
+`insufficient`=材料只覆盖一部分，或压根没有对应证据。**宁可写 insufficient 也不要编证据**——评测对"无证据的 supported"判 0。
+
+**第三步 · 门禁校验（已包含在 `--run-all` 里）**
+
+`--verify-nanopubs` 写 `nanopubs_check.json`：`quotes_verbatim / locators_from_stage1 / enums_valid / notes_substantive / all_passed`。
+不过门禁 → 自动退回脚本推导断言，并在 `result.json` 的 `gaps` 里写明，**不会假装用了模型结果**。
+`check_report.json` 里 `model_script_agreement_rate` 是模型判定与脚本字面判定的一致率，供人复核，不作门禁。
+
+## 交付物
+
+| 文件 | 内容 |
+|---|---|
+| `audit.json` | 每条断言：`claim` · `status` · `evidence[{doc_id,section_id,quote,overlap}]` · `audit_note` · `locator` · `quote` |
+| `annotated_report.md` | `ID \| status \| 证据定位`，顺序与 `audit.json` 完全一致 |
+| `check_report.json` | 自校验：id 唯一、状态枚举、证据可解析、无撤稿段作支持（+ 模型门禁结果） |
+| `nanopubs_check.json` | 模型图的逐条门禁（是否采用 `nanopubs.json` 的依据） |
+| `blocks.tsv` | 第一阶段的块与定位 |
+| `inventory.tsv` / `repro_manifest.json` | 六维文件元数据与复跑信息 |
 
 判定边界：**只用材料里有的东西** —— 每条结论带 `文件#定位`；材料没写的字段写「材料未说明」；做不到的写进 `gaps`，不写成已完成。

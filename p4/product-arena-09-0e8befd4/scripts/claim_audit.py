@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,6 +40,19 @@ try:
 except Exception:
     def meta_attach(inp, out):
         return {"unavailable": True}
+
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from zz_author import dump_blocks, run_pair as author_run, flat as _flat_q
+except Exception:                                     # 缺件时退化为"只用脚本推导"，不能因此崩掉
+    def dump_blocks(blocks, out, name="blocks.tsv"):
+        return 0
+
+    def author_run(path, blocks, out, spec):
+        return [], {"checks": {"all_passed": False}, "problems": ["zz_author 缺失"]}, False
+
+    def _flat_q(t):
+        return re.sub(r"\s+", "", str(t or ""))
 
 NUM = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*(%|％|°C|℃|µm|μm|um|nm|mm|cm|m|MPa|GPa|kPa|N|kg|mg|µg|ug|g|"
                  r"mL|µL|uL|L|h|min|s|days?|weeks?|Hz|kHz|J/mm³|J/cm³|W/mK|次|件|倍|个|例)")
@@ -140,6 +154,35 @@ def load_claims(inp: Path) -> list[dict]:
     return out
 
 
+# 第二阶段（模型写 nanopubs.json）用的条目契约：判定必须在枚举内、引文必须逐字、locator 必须来自 blocks.tsv
+NANO_SPEC = {
+    "name": "nanopubs",
+    "list_keys": ("claims", "items", "assertions"),
+    "required": ("claim", "verdict", "quote", "locator", "rationale"),
+    "enums": {"verdict": ("supported", "contradicted", "insufficient")},
+    "min_items": 3, "text_field": "claim", "note_field": "rationale", "note_min": 20,
+    "quote_field": "quote", "locator_field": "locator", "id_field": "claim_id", "quote_min": 8,
+}
+
+
+def material_blocks(inp: Path, corpus: list[dict]) -> list[dict]:
+    """第一阶段：能定位的块清单。有 corpus 就用 corpus 的 doc#section，否则按段落切原文文件。"""
+    if corpus:
+        return [{"locator": f'{s["doc_id"]}#{s["section_id"]}', "text": s["text"]} for s in corpus]
+    blocks: list[dict] = []
+    for p2 in sorted(inp.rglob("*")):
+        if not p2.is_file() or p2.suffix.lower() not in {".md", ".txt"}:
+            continue
+        if any(k in p2.name.lower() for k in ("case.json", "task.md", "skill.md", "instruction")):
+            continue
+        text = p2.read_text(encoding="utf-8", errors="replace")
+        for pno, para in enumerate(re.split(r"\n\s*\n", text), 1):
+            t = norm(para)
+            if len(t) >= 20:
+                blocks.append({"locator": f"{p2.name}#p{pno}", "text": t})
+    return blocks
+
+
 def score_section(claim_units: set[str], text: str) -> float:
     su = units(text)
     if not claim_units or not su:
@@ -221,6 +264,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default="/input")
     ap.add_argument("--output", default="/app/output")
+    ap.add_argument("--blocks", action="store_true", help="只写 blocks.tsv（模型写作的唯一定位来源）")
+    ap.add_argument("--verify-nanopubs", default=None, help="校验模型交回的 nanopubs.json")
+    ap.add_argument("--run-all", action="store_true",
+                    help="一次性：blocks.tsv → 有 nanopubs.json 且过校验就用它 → 出审计 → attach_meta")
     args = ap.parse_args()
     inp, out = Path(args.input), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
@@ -231,12 +278,43 @@ def main() -> int:
         except Exception:
             pass
     corpus = load_corpus(inp)
+    blocks = material_blocks(inp, corpus)
+    model_items: list[dict] = []
+    nano_report: dict = {}
+    if args.blocks:
+        n = dump_blocks(blocks, out)
+        print(json.dumps({"case_id": case_id, "blocks": n, "blocks_tsv": str(out / "blocks.tsv")},
+                         ensure_ascii=False))
+        return 0
+    if args.verify_nanopubs:
+        items, rep, ok = author_run(Path(args.verify_nanopubs), blocks, out, NANO_SPEC)
+        print(json.dumps(rep, ensure_ascii=False))
+        return 0 if ok else 1
+    if args.run_all:
+        dump_blocks(blocks, out)
+        cand = out / "nanopubs.json"
+        if cand.is_file():
+            model_items, nano_report, ok = author_run(cand, blocks, out, NANO_SPEC)
+            if not ok:
+                model_items = []
     claims = load_claims(inp)
+    if model_items:
+        claims = [{"claim_id": str(it.get("claim_id") or f"N{i:02d}"),
+                   "text": norm(it.get("claim")),
+                   "orig": [],
+                   "_locator": str(it.get("locator") or ""),
+                   "_quote": str(it.get("quote") or ""),
+                   "_verdict": str(it.get("verdict") or ""),
+                   "_rationale": norm(it.get("rationale") or "")}
+                  for i, it in enumerate(model_items, 1)]
     derived_from_text = False
     if not claims:
         # no explicit claim list: extract assertion sentences from the material as the nanopublication set
-        pat = re.compile(r"(表明|说明|显示|发现|证实|提示|因此|可见|结果表明|we (?:find|show|observe)|"
-                         r"suggest\w*|indicat\w*)", re.I)
+        # 断言句的判据：有结论性提示词，或有量值 + 比较/变化谓词（"寿命明显更高"、"从 1.3% 降到 1.0%"）
+        pat = re.compile(r"(表明|说明|显示|发现|证实|提示|因此|可见|结果表明|结论|"
+                         r"显著|提高|提升|降低|减少|增加|下降|更高|更低|优于|差异|"
+                         r"we (?:find|show|observe)|suggest\w*|indicat\w*|improv\w*|reduc\w*|"
+                         r"increas\w*|decreas\w*|significant\w*)", re.I)
         texts = []
         for p2 in sorted(inp.rglob("*")):
             if p2.is_file() and p2.suffix.lower() in {".md", ".txt"}:
@@ -248,10 +326,11 @@ def main() -> int:
                     t = norm(sent)
                     # a Chinese assertion is complete well before 18 characters of latin
                     cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
-                    if len(t) >= (12 if cjk >= 8 else 18) and pat.search(t):
+                    has_num = bool(NUM.search(t))
+                    if len(t) >= (12 if cjk >= 8 else 18) and (pat.search(t) or has_num):
                         idx += 1
                         claims.append({"claim_id": f"N{idx:02d}", "text": t[:300], "orig": [],
-                                       "_locator": f"{name}#p{pno}"})
+                                       "_locator": f"{name}#p{pno}", "_quote": t[:300]})
         derived_from_text = bool(claims)
     if not claims:
         (out / "result.json").write_text(json.dumps(
@@ -261,9 +340,23 @@ def main() -> int:
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
         return 0
     audited = [judge(c, corpus) for c in claims]
+    corpus_refs = {(s["doc_id"], s["section_id"]) for s in corpus}
     for a, c in zip(audited, claims):
         if c.get("_locator"):
             a["locator"] = c["_locator"]
+        if c.get("_quote"):
+            a["quote"] = c["_quote"]
+        a["claim"] = c["text"]
+        if c.get("_verdict"):
+            # 模型给了判定：用它，但把脚本的字面判定一并留作对照（check_report 里给一致率）
+            a["script_status"] = a["status"]
+            a["status"] = c["_verdict"]
+            a["audit_note"] = c["_rationale"] or a["audit_note"]
+            a["judged_by"] = "model"
+            if "#" in c["_locator"]:
+                d, sec = c["_locator"].split("#", 1)
+                if (d, sec) in corpus_refs:
+                    a["evidence"] = [{"doc_id": d, "section_id": sec}]
     audit = {"case_id": case_id, "claims": audited}
     (out / "audit.json").write_text(json.dumps(audit, ensure_ascii=False, indent=1), encoding="utf-8")
     lines = ["# 观点证据审计（annotated report）", ""]
@@ -289,13 +382,20 @@ def main() -> int:
                     if (s["doc_id"], s["section_id"]) in {(e["doc_id"], e["section_id"]) for e in a["evidence"]})
             or a["status"] != "supported" for a in audited),
     }
-    checks["all_passed"] = all(checks.values())
+    if model_items:
+        mchk = nano_report.get("checks", {})
+        checks["model_quotes_verbatim"] = bool(mchk.get("quotes_verbatim"))
+        checks["model_locators_from_stage1"] = bool(mchk.get("locators_from_stage1"))
+        agree = sum(1 for a in audited if a.get("script_status") == a["status"])
+        checks["model_script_agreement_rate"] = round(agree / max(len(audited), 1), 3)
+    # 一致率是给读者看的对照指标，不是门禁：模型判 supported 而字面重合低，可能是它读懂了论证
+    checks["all_passed"] = all(v for k, v in checks.items() if k != "model_script_agreement_rate")
     (out / "check_report.json").write_text(json.dumps(
         {"case_id": case_id, "checks": checks, "claims": len(audited),
          "by_status": {k: sum(1 for a in audited if a["status"] == k)
                        for k in ("supported", "contradicted", "insufficient")}},
         ensure_ascii=False, indent=1), encoding="utf-8")
-    payload = {"case_id": case_id, "status": "answered",
+    payload = {"case_id": case_id, "status": "answered", "authored_by": "model" if model_items else "script",
                "audit": {"json": "audit.json", "report": "annotated_report.md",
                          "claims": len(audited),
                          "by_status": {k: sum(1 for a in audited if a["status"] == k)
@@ -304,7 +404,9 @@ def main() -> int:
                              1 for a in audited if a["original_citation_problem"])},
                "checks": "check_report.json",
                "gaps": ([] if corpus else ["没有可读的 corpus.json，所有观点只能判 insufficient"])
-                       + (["输入未提供 claims.json，断言由材料中的结论句提取（已标 locator）"] if derived_from_text else []),
+                       + (["输入未提供 claims.json，断言由材料中的结论句提取（已标 locator）"] if derived_from_text else [])
+                       + ([] if model_items or not args.run_all else
+                          ["nanopubs.json 缺失或未通过门禁，已退回脚本推导断言"]),
                "limitations": ["判定基于字面重合与数值一致，不做语义推理",
                                "被修订/撤稿的段落只用于反驳，不用于支持",
                                "证据只引用整段原文，不做改写（改写会导致逐字核对失败）"],
@@ -313,7 +415,13 @@ def main() -> int:
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "claims": len(audited),
                       "by_status": payload["audit"]["by_status"],
+                      "authored_by": payload["authored_by"],
                       "all_passed": checks["all_passed"]}, ensure_ascii=False))
+    if args.run_all:
+        meta = Path(__file__).resolve().parent / "attach_meta.py"
+        if meta.is_file():
+            subprocess.run([sys.executable, str(meta), "--input", str(inp), "--output", str(out)],
+                           capture_output=True, text=True, timeout=300)
     return 0
 
 
