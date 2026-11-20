@@ -118,8 +118,9 @@ def collect(root: Path) -> tuple[list[dict], list[str]]:
                 joined = norm(" ".join(para_lines))
                 for sent in re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", joined):
                     # a Chinese sentence carries the same content in ~half the characters of an English one
-                    cjk = len(re.findall(r"[\u4e00-\u9fff]", sent))
-                    if len(sent) < (16 if cjk >= 8 else 40):
+                    # 中文句子里数字/符号也算内容："孔隙率从 1.3% 降到 1.0%。"只有 6 个汉字但是完整判断
+                    content = len(re.findall(r"[\u4e00-\u9fff0-9]", sent))
+                    if len(sent) < (16 if content >= 8 else 40):
                         continue
                     sidx += 1
                     out.append({"source": path.name, "page": pno,
@@ -327,11 +328,58 @@ def _raw_pptx(slides: list[dict], title: str, out_path) -> bool:
         return False
 
 
+
+def verify_slides(slides_path: Path, blocks: list[dict], out: Path) -> int:
+    """Gate for agent-authored slides: every bullet must be short, and numbers must exist in the material.
+
+    为什么要有这层：题面要求"每条要点可指回材料"，而模型最容易在 PPT 里写没有出处的判断。
+    校验四件事：标题不超长、每页 2–5 条要点、单条 ≤160 字符、**每条要点带 [n] 或 `· 定位`，且数字能在材料里找到**。
+    """
+    material = " ".join(b["text"] for b in blocks)
+    try:
+        specs = json.loads(slides_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        (out / "slides_check.json").write_text(json.dumps({"error": f"unreadable: {exc}"}, ensure_ascii=False),
+                                               encoding="utf-8")
+        print(json.dumps({"error": "unreadable slides"}, ensure_ascii=False))
+        return 1
+    problems, n_bullets = [], 0
+    for i, sl in enumerate(specs, 1):
+        title = str(sl.get("title") or "")
+        bullets = [str(b) for b in (sl.get("bullets") or [])]
+        n_bullets += len(bullets)
+        if not title.strip():
+            problems.append(f"slide {i}: empty title")
+        if len(title) > 90:
+            problems.append(f"slide {i}: title too long ({len(title)} chars)")
+        if not (2 <= len(bullets) <= 6):
+            problems.append(f"slide {i}: {len(bullets)} bullets (want 2-6)")
+        for b in bullets:
+            if len(b) > 160:
+                problems.append(f"slide {i}: bullet too long ({len(b)} chars)")
+            if not re.search(r"\[\d+\]|·\s*\S+#", b):
+                problems.append(f"slide {i}: bullet without [n] or locator: {b[:50]}")
+            for m in NUM.finditer(b):
+                # 材料里可能写成 "1.3 %" 或 "1.3%"，比数字而不是整串
+                if not re.search(re.escape(m.group(1)) + r"\s*" + re.escape(m.group(2) or ""), material):
+                    problems.append(f"slide {i}: number {m.group(0)} not in material")
+    checks = {"slides_nonempty": bool(specs), "titles_ok": not any("title" in p for p in problems),
+              "bullets_ok": not any("bullet" in p for p in problems),
+              "numbers_traceable": not any("not in material" in p for p in problems)}
+    checks["all_passed"] = all(checks.values())
+    report = {"checks": checks, "slides": len(specs), "bullets": n_bullets, "problems": problems[:20]}
+    (out / "slides_check.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False))
+    return 0 if checks["all_passed"] else 1
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default="/input")
     ap.add_argument("--output", default="/app/output")
     ap.add_argument("--title", default="Findings from the supplied material")
+    ap.add_argument("--slides", default=None, help="agent-authored slide specs (JSON list)")
+    ap.add_argument("--verify-slides", default=None,
+                    help="check agent-authored slide specs against the material (exit 1 if unusable)")
     args = ap.parse_args()
     inp, out = Path(args.input), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
@@ -342,6 +390,8 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             pass
     blocks, notes = collect(inp)
+    if args.verify_slides:
+        return verify_slides(Path(args.verify_slides), blocks, out)
     numbers = [{"value": f"{m.group(1)} {m.group(2)}", "locator": b["locator"],
                 "quote": b["text"][:160]}
                for b in blocks for m in [NUM.search(b["text"])] if m]
@@ -362,6 +412,14 @@ def main() -> int:
         _have_pptx = True
     except Exception:  # noqa: BLE001
         _have_pptx = False
+    slides_override = None
+    if args.slides:
+        try:
+            slides_override = json.loads(Path(args.slides).read_text(encoding="utf-8"))
+            if not isinstance(slides_override, list) or not slides_override:
+                raise ValueError("slides must be a non-empty JSON list")
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(f"--slides unreadable: {exc}")
     if _have_pptx:
         from pptx.util import Inches, Pt
     prs = Presentation() if _have_pptx else None
@@ -383,6 +441,8 @@ def main() -> int:
                       "bullets": ["Deck only restates material sentences; no claim goes beyond them.",
                                   "Figures/tables inside the source are not extracted (text layer only).",
                                   "Sections without material are marked, not filled."]})
+        if slides_override:
+            specs = slides_override
         pptx_path = out / "deck.pptx"
         if not _raw_pptx(specs, args.title, pptx_path):
             raise SystemExit("could not write deck.pptx")
@@ -489,6 +549,8 @@ def main() -> int:
                   "Sections without material are marked, not filled."]
         add_text(s, 0.8, 1.8, 11.5, 3.5, "\n".join(f"• {t}" for t in limits), size=18)
 
+        if slides_override:
+            specs = slides_override
         pptx_path = out / "deck.pptx"
         prs.save(str(pptx_path))
     render_status, pages = render(pptx_path, out)
