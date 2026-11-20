@@ -28,13 +28,16 @@ import zipfile
 from pathlib import Path
 
 NUM = re.compile(r"(?<![0-9.])(\d+(?:\.\d+)?)\s*(%|mm|cm|µm|um|nm|MPa|kPa|GPa|N|kg|mg|mL|L|h|min|days?|"
-                 r"weeks?|years?|samples?|specimens?|patients?)(?![A-Za-z])")
+                 r"weeks?|years?|samples?|specimens?|patients?|件|例|倍|个|次)(?![A-Za-z])")
 DESIGN = re.compile(r"\b(randomi[sz]ed|controlled trial|cohort|case[- ]control|cross[- ]sectional|"
                     r"in vitro|in vivo|animal model|retrospective|prospective|meta-analysis|"
-                    r"systematic review|simulation)\b", re.I)
-SAMPLE = re.compile(r"\bn\s*=\s*(\d+)|\b(\d+)\s+(?:samples?|specimens?|patients?|participants?|mice|hands?)\b", re.I)
+                    r"systematic review|simulation)\b|随机|对照试验|队列|病例对照|横断面|体外|体内|"
+                    r"动物模型|回顾性|前瞻性|荟萃分析|系统综述|仿真|模拟", re.I)
+SAMPLE = re.compile(r"\bn\s*=\s*(\d+)|\b(\d+)\s+(?:samples?|specimens?|patients?|participants?|mice|hands?)\b|"
+                    r"(?:样本量|共|每组)\s*(\d+)\s*(?:件|例|个|只)", re.I)
 EFFECT = re.compile(r"\b(increas\w+|decreas\w+|reduc\w+|improv\w+|higher|lower|greater|significan\w*|"
-                    r"no difference|unchanged|correlat\w+)\b", re.I)
+                    r"no difference|unchanged|correlat\w+)\b|提高|降低|增加|减少|升高|下降|显著|"
+                    r"无差异|不变|相关", re.I)
 LIMIT = re.compile(r"\b(limitation|caveat|confound|bias|small sample|single material|"
                    r"局限|不足|偏倚)\b", re.I)
 
@@ -66,6 +69,12 @@ def read_material(inp: Path) -> tuple[str, str]:
             if t.strip():
                 return t, best.name
         return "", best.name
+    if best.suffix.lower() in {".csv", ".tsv"}:
+        rows = csv_record_rows(best)
+        if rows:
+            # 以行记录为主：把每行拼成"一段"再交给 prose 分支处理会丢字段，这里直接返回带字段的 JSON 文本
+            import json as _json
+            return "\n\n".join(_json.dumps(r, ensure_ascii=False) for r in rows), best.name
     if best.suffix.lower() == ".docx":
         with zipfile.ZipFile(best) as z:
             xml = z.read("word/document.xml").decode("utf-8", "replace")
@@ -74,8 +83,63 @@ def read_material(inp: Path) -> tuple[str, str]:
     return best.read_text(encoding="utf-8", errors="replace"), best.name
 
 
+
+def csv_record_rows(path: Path) -> list[dict]:
+    """A records table is one record per row. Parsing it as prose gives "1 record" for a 5-row CSV."""
+    delim = "\t" if path.suffix.lower() == ".tsv" else ","
+    try:
+        with path.open(encoding="utf-8", errors="replace", newline="") as fh:
+            rows = list(csv.DictReader(fh, delimiter=delim))
+    except Exception:
+        return []
+    out = []
+    for i, row in enumerate(rows, 1):
+        low = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+        if not any(low.values()):
+            continue
+        text = ". ".join(v for v in low.values() if v)[:600]
+        if len(text) < 20:
+            continue
+        title = next((low[k] for k in ("title", "题目", "标题", "name") if low.get(k)), text[:80])
+        abstract = next((low[k] for k in ("abstract", "摘要", "description") if low.get(k)), text)
+        design = (DESIGN.search(abstract).group(0) if DESIGN.search(abstract) else "")
+        sample = (SAMPLE.search(abstract).group(0) if SAMPLE.search(abstract) else "")
+        effect = (EFFECT.search(abstract).group(0) if EFFECT.search(abstract) else "")
+        limit = (LIMIT.search(abstract).group(0) if LIMIT.search(abstract) else "")
+        nums = [f"{m.group(1)} {m.group(2)}" for m in NUM.finditer(abstract)][:3]
+        year = next((low[k] for k in ("year", "年份", "pub_year") if low.get(k)), "")
+        doi = next((low[k] for k in ("doi",) if low.get(k)), "")
+        out.append({"rid": f"R{i}", "title": title[:120],
+                    "design": design or "not_reported", "sample": sample or "not_reported",
+                    "numbers": "; ".join(nums) or "not_reported",
+                    "effect": effect or "not_reported", "limitation": limit or "not_reported",
+                    "strength": ("high" if design.lower().startswith(("systematic", "meta"))
+                                 else "moderate" if design else "unclear"),
+                    "locator": f"{path.name}#row{i}", "text": abstract[:400],
+                    "year": year, "doi": doi})
+    return out
+
+
+
+def _loc(source: str, locator) -> str:
+    """CSV rows already carry `file#rowN`; prose blocks only have a paragraph number."""
+    loc = str(locator)
+    return loc if "#" in loc else f"{source}#p{loc}"
+
 def record_rows(text: str) -> list[dict]:
     """A record is a markdown heading section, a blank-line paragraph, or a CSV/JSON row."""
+    stripped = text.strip()
+    if stripped.startswith("{") and "\"rid\"" in stripped:
+        rows = []
+        for i, line in enumerate([x for x in stripped.splitlines() if x.strip()], 1):
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            d.setdefault("rid", f"R{i}")
+            rows.append(d)
+        if rows:
+            return rows
     raw = [norm(b) for b in re.split(r"\n\s*\n", text) if norm(b)]
     blocks: list[str] = []
     for b in raw:                       # a heading line belongs to the paragraph under it
@@ -90,10 +154,10 @@ def record_rows(text: str) -> list[dict]:
         rid += 1
         title = b.split(".")[0][:120]
         nums = [f"{m.group(1)} {m.group(2)}" for m in NUM.finditer(b)][:3]
-        design = (DESIGN.search(b).group(1) if DESIGN.search(b) else "")
+        design = (DESIGN.search(b).group(0) if DESIGN.search(b) else "")
         sample = (SAMPLE.search(b).group(0) if SAMPLE.search(b) else "")
-        effect = (EFFECT.search(b).group(1) if EFFECT.search(b) else "")
-        limit = (LIMIT.search(b).group(1) if LIMIT.search(b) else "")
+        effect = (EFFECT.search(b).group(0) if EFFECT.search(b) else "")
+        limit = (LIMIT.search(b).group(0) if LIMIT.search(b) else "")
         strength = ("high" if design.lower().startswith(("systematic", "meta")) else
                     "moderate" if design else "unclear")
         rows.append({"rid": f"R{rid}", "title": title, "design": design or "not_reported",
@@ -224,7 +288,8 @@ def main() -> int:
         fh.write("rid\ttitle\tdesign\tsample\tquantitative\teffect\tlimitation\tstrength\tlocator\n")
         for r in rows:
             fh.write(f'{r["rid"]}\t{r["title"][:120]}\t{r["design"]}\t{r["sample"]}\t{r["numbers"]}\t'
-                     f'{r["effect"]}\t{r["limitation"]}\t{r["strength"]}\t{source}#p{r["locator"]}\n')
+                     f'{r["effect"]}\t{r["limitation"]}\t{r["strength"]}\t'
+                     f'{_loc(source, r["locator"])}\n')
     with (out / "conflicts.tsv").open("w", encoding="utf-8") as fh:
         fh.write("quantity\tunit\tvalues\tbasis\n")
         for c in conf:
@@ -246,7 +311,7 @@ def main() -> int:
     for r in rows:
         if r["effect"] != "not_reported" and r["strength"] != "unclear":
             md.append(f'- {r["title"]}：{r["effect"]}；{r["numbers"]}（{r["design"]}，{r["sample"]}）'
-                      f'〔{r["rid"]}｜强度 {r["strength"]}｜{source}#p{r["locator"]}〕')
+                      f'〔{r["rid"]}｜强度 {r["strength"]}｜{_loc(source, r["locator"])}〕')
     if not any(r["effect"] != "not_reported" and r["strength"] != "unclear" for r in rows):
         md.append("- 材料中没有可判定方向的结论（只报告了主题陈述）。")
     listed = {r["rid"] for r in rows
@@ -256,7 +321,7 @@ def main() -> int:
         md += ["", "## 2b 其余记录（描述性，不构成方向性结论）", ""]
         for r in rest:
             md.append(f'- {r["title"]}：设计 {r["design"]}，样本 {r["sample"]}，定量 {r["numbers"]}'
-                      f'〔{r["rid"]}｜强度 {r["strength"]}｜{source}#p{r["locator"]}〕')
+                      f'〔{r["rid"]}｜强度 {r["strength"]}｜{_loc(source, r["locator"])}〕')
     md += ["", "## 3 冲突与不一致", ""]
     for c in conf[:10]:
         md.append(f'- `{c["quantity"]}`（{c["unit"]}）在不同记录中取值为 '
