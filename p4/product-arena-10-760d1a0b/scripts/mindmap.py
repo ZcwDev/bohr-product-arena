@@ -262,16 +262,58 @@ def material_blocks(inp: Path) -> tuple[list[dict], str]:
             blocks = []
     else:
         text = best.read_text(encoding="utf-8", errors="replace")
-        pages = text.split("\f")
-        i = 0
-        for pno, page in enumerate(pages, 1):
-            for para in re.split(r"\n\s*\n", page):
-                for t in paragraphize(clean(para)):
-                    if len(t) >= 50:
-                        i += 1
-                        blocks.append({"page": pno, "block": i, "text": t,
-                                       "locator": f"{best.name}#p{pno}b{i}"})
+        blocks.extend(md_blocks(text, best.name))
     return blocks, best.name
+
+
+MD_MIN = 24          # 正文块下限：中文一句结论常常不到 50 字
+HEAD_MAX = 24        # 无 # 前缀时，"短、无句末标点、无逗号"的行按小标题处理
+
+
+def md_blocks(text: str, name: str) -> list[dict]:
+    """把 markdown/纯文本切成块，标题单独成块。
+
+    旧版把整页当一个 blob 再按 700 字切、并丢弃 <50 字的段落——摘要、结论、局限这类短段落正好是
+    claim/limitation 节点的唯一来源，被丢掉之后图谱里只剩方法与结果，关系也就编不出冲突边。
+    """
+    blocks: list[dict] = []
+    state = {"i": 0, "cur": []}
+
+    def flush(pno: int) -> None:
+        body = clean(" ".join(state["cur"]))
+        state["cur"] = []
+        if not body:
+            return
+        for t in paragraphize(body):
+            if len(t) >= MD_MIN or len(re.findall(r"[\u4e00-\u9fff]", t)) >= 8:
+                state["i"] += 1
+                blocks.append({"page": pno, "block": state["i"], "text": t,
+                               "locator": f"{name}#p{pno}b{state['i']}"})
+
+    def heading(line: str, pno: int) -> None:
+        state["i"] += 1
+        blocks.append({"page": pno, "block": state["i"], "text": clean(line),
+                       "locator": f"{name}#p{pno}b{state['i']}"})
+
+    for pno, page in enumerate(text.split("\f"), 1):
+        for raw in page.splitlines():
+            line = raw.strip()
+            if not line:
+                flush(pno)
+                continue
+            m = re.match(r"^(#{1,6})\s+(.*)$", line)
+            if m:
+                flush(pno)
+                heading(m.group(2), pno)
+                continue
+            if (len(line) <= HEAD_MAX and not re.search(r"[。.！!？?；;：:]$", line)
+                    and not re.search(r"[，,、]", line)):
+                flush(pno)
+                heading(line, pno)
+                continue
+            state["cur"].append(line)
+        flush(pno)
+    return blocks
 
 
 def recurring_furniture(blocks: list[dict], min_pages: int = 3) -> set[str]:
@@ -687,7 +729,8 @@ def _depth(graph: dict) -> int:
 
 
 def coverage(graph: dict, blocks: list[dict], units: list[dict]) -> dict:
-    used = {n["locator"].split("s")[0] for n in graph["nodes"]}
+    # locator 形如 <file>#p1b2s3；只去掉句子后缀，不能按 "s" 切——文件名里本来就可能有 s
+    used = {re.sub(r"s\d+$", "", n["locator"]) for n in graph["nodes"]}
     covered = [b for b in blocks if any(b["locator"] in u for u in used)]
     kinds: dict[str, int] = {}
     for n in graph["nodes"]:
@@ -704,12 +747,125 @@ def coverage(graph: dict, blocks: list[dict], units: list[dict]) -> dict:
 # ---------------------------------------------------------------- main
 
 
+
+REL_OK = {"structural", "depends", "contrasts", "conflicts", "supports"}
+
+
+def _flat(t) -> str:
+    return re.sub(r"\s+", "", str(t or ""))
+
+
+def load_agent_graph(path: Path, case_id: str, reparent: bool = True) -> dict:
+    """模型写的图：只接受字段完整的节点，缺 locator 的节点会被 verify 拦下，这里先原样装载。
+
+    reparent=True 时把"父节点不存在"的节点挂到根上，只为渲染不崩；校验走 reparent=False，
+    这样缺 parent 仍然是一条能被拦下的问题，而不是被悄悄修掉。
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    nodes = []
+    for n in data.get("nodes") or []:
+        quote = str(n.get("quote") or "")
+        nodes.append({"id": str(n.get("id") or f"N{len(nodes) + 1:03d}"),
+                      "parent": (str(n["parent"]) if n.get("parent") else None),
+                      "kind": str(n.get("kind") or "concept"),
+                      "evidence_type": str(n.get("evidence_type") or "fact"),
+                      "locator": str(n.get("locator") or ""),
+                      "label": str(n.get("label") or "")[:80],
+                      "quote": quote, "quote_sha256": sha(norm(quote))[:16]})
+    edges = []
+    for e in data.get("edges") or []:
+        edges.append({"source": str(e.get("source") or ""), "target": str(e.get("target") or ""),
+                      "relation": str(e.get("relation") or "structural"),
+                      "basis": str(e.get("basis") or "")})
+    ids = {n["id"] for n in nodes}
+    root = str(data.get("root") or "")
+    if root not in ids:
+        root = next((n["id"] for n in nodes if not n["parent"]), nodes[0]["id"] if nodes else "N001")
+    if reparent:
+        # 悬空父节点与多余顶层节点都挂到根上：布局是按根做树遍历的，否则这些节点没有坐标
+        for n in nodes:
+            if n["id"] != root and (not n["parent"] or n["parent"] not in ids):
+                n["parent"] = root
+    return {"case_id": case_id, "title": str(data.get("title") or ""), "root": root,
+            "nodes": nodes, "edges": edges, "truncated": False}
+
+
+def verify_agent_graph(path: Path, blocks: list[dict], out: Path) -> int:
+    """门禁：模型写的知识图谱必须每个节点可回溯、每条关系有类型与端点。
+
+    题面要求"节点与边都能回到原文定位"，所以这里逐条查：label 非空且不超长、locator 指向真实文件、
+    quote（如给出）在材料里逐字存在（忽略空白）、parent/端点都存在、关系类型在 allowed 集合内。
+    """
+    material = _flat(" ".join(b["text"] for b in blocks))
+    files = {str(b.get("locator", "")).split("#")[0] for b in blocks if b.get("locator")}
+    # locator 必须是第一阶段真实产出的块定位（允许带句子后缀 s3）；编出来的 locator 会让覆盖率静默变 0
+    real = {str(b.get("locator", "")) for b in blocks}
+
+    def locator_exists(loc: str) -> bool:
+        base = re.sub(r"s\d+$", "", loc)
+        return base in real or any(r.startswith(base + "s") for r in real)
+    try:
+        g = load_agent_graph(path, "check", reparent=False)
+    except Exception as exc:  # noqa: BLE001
+        rep = {"error": f"unreadable graph: {exc}"}
+        (out / "graph_check.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(json.dumps(rep, ensure_ascii=False))
+        return 1
+    ids = {n["id"] for n in g["nodes"]}
+    problems = []
+    for n in g["nodes"]:
+        if not n["label"].strip():
+            problems.append(f'{n["id"]}: empty label')
+        if len(n["label"]) > 80:
+            problems.append(f'{n["id"]}: label too long')
+        if not n["locator"] or "#" not in n["locator"]:
+            problems.append(f'{n["id"]}: missing locator (want file#locator)')
+        elif files and not any(f and f in n["locator"] for f in files):
+            problems.append(f'{n["id"]}: locator points to an unknown file')
+        elif real and not locator_exists(n["locator"]):
+            problems.append(f'{n["id"]}: locator {n["locator"]} is not a block produced in stage 1')
+        if n["quote"] and _flat(n["quote"]) not in material:
+            problems.append(f'{n["id"]}: quote not verbatim in material')
+        if n["parent"] and n["parent"] not in ids:
+            problems.append(f'{n["id"]}: parent {n["parent"]} missing')
+    for e in g["edges"]:
+        if e["relation"] not in REL_OK:
+            problems.append(f'edge {e["source"]}->{e["target"]}: bad relation {e["relation"]}')
+        for end in (e["source"], e["target"]):
+            if end not in ids:
+                problems.append(f'edge endpoint {end} missing')
+    kinds = {}
+    for n in g["nodes"]:
+        kinds[n["kind"]] = kinds.get(n["kind"], 0) + 1
+    typed_edges = sum(1 for e in g["edges"] if e["relation"] != "structural")
+    checks = {
+        "nodes_present": len(g["nodes"]) >= 5,
+        "every_node_has_locator": not any("missing locator" in p or "unknown file" in p
+                                          or "not a block produced" in p for p in problems),
+        "quotes_verbatim": not any("not verbatim" in p for p in problems),
+        "edges_have_types": not any("bad relation" in p for p in problems),
+        "edges_connected": not any("endpoint" in p for p in problems),
+        "has_typed_relations": typed_edges >= 2,
+    }
+    checks["all_passed"] = all(checks.values())
+    rep = {"checks": checks, "nodes": len(g["nodes"]), "edges": len(g["edges"]),
+           "kinds": kinds, "typed_edges": typed_edges, "problems": problems[:20]}
+    (out / "graph_check.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(json.dumps(rep, ensure_ascii=False))
+    return 0 if checks["all_passed"] else 1
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--input", default="/input")
     ap.add_argument("--output", default="/app/output")
     ap.add_argument("--max-nodes", type=int, default=120)
     ap.add_argument("--check", default=None)
+    ap.add_argument("--graph", default=None, help="agent-authored graph JSON (rendered instead of the derived one)")
+    ap.add_argument("--verify-graph", default=None, help="check an agent-authored graph (exit 1 if unusable)")
+    ap.add_argument("--blocks", action="store_true",
+                    help="stage 1 only: dump blocks.tsv (locator · text) for agent authoring, then exit")
+    ap.add_argument("--run-all", action="store_true",
+                    help="one-shot: blocks.tsv -> verify graph.json if present -> render -> attach_meta")
     args = ap.parse_args()
     _ensure_science_python()
     out = Path(args.output)
@@ -732,8 +888,38 @@ def main() -> int:
              "limitations": ["the extractor needs PDF/DOCX/MD/TXT text; image-only PDFs are not "
                              "OCR'd"]}, ensure_ascii=False, indent=1), encoding="utf-8")
         return 2
+    if args.blocks:
+        with (out / "blocks.tsv").open("w", encoding="utf-8") as f:
+            f.write("locator\tchars\ttext\n")
+            for b in blocks:
+                f.write(f'{b["locator"]}\t{len(b["text"])}\t{b["text"]}\n')
+        print(json.dumps({"case_id": case_id, "blocks": len(blocks), "blocks_tsv": str(out / "blocks.tsv")},
+                         ensure_ascii=False))
+        return 0
+    if args.verify_graph:
+        return verify_agent_graph(Path(args.verify_graph), blocks, out)
+    if args.run_all:
+        with (out / "blocks.tsv").open("w", encoding="utf-8") as f:
+            f.write("locator\tchars\ttext\n")
+            for b in blocks:
+                f.write(f'{b["locator"]}\t{len(b["text"])}\t{b["text"]}\n')
+        gp = out / "graph.json"
+        if gp.is_file():
+            if verify_agent_graph(gp, blocks, out) == 0:
+                args.graph = str(gp)
+            else:
+                args.graph = None
+                (out / "graph_check.json").write_text(json.dumps(
+                    {"checks": {"all_passed": False}, "note": "graph.json 未通过门禁，已退回脚本推导图谱"},
+                    ensure_ascii=False, indent=1), encoding="utf-8")
+        else:
+            (out / "graph_check.json").write_text(json.dumps(
+                {"checks": {"all_passed": None}, "note": "没有 graph.json，使用脚本推导图谱"}, ensure_ascii=False,
+                indent=1), encoding="utf-8")
+            args.graph = None
     units = sentence_units(blocks)
-    graph = build_graph(blocks, units, case_id, args.max_nodes, recurring_furniture(blocks))
+    graph = (load_agent_graph(Path(args.graph), case_id) if args.graph
+             else build_graph(blocks, units, case_id, args.max_nodes, recurring_furniture(blocks)))
     write_mm(out / "mindmap.mm", graph)
     write_opml(out / "mindmap.opml", graph)
     write_md(out / "mindmap.md", graph)
@@ -783,7 +969,13 @@ def main() -> int:
     print(json.dumps({"case_id": case_id, "status": result["status"],
                       "nodes": len(graph["nodes"]), "edges": len(graph["edges"]),
                       "coverage": cov["block_coverage"], "render": render,
+                      "graph_source": "agent" if args.graph else "derived",
                       "all_passed": checks["all_passed"]}, ensure_ascii=False))
+    if args.run_all:
+        meta = Path(__file__).resolve().parent / "attach_meta.py"
+        if meta.is_file():
+            subprocess.run([sys.executable, str(meta), "--input", str(inp), "--output", str(out)],
+                           capture_output=True, text=True, timeout=300)
     return 0
 
 
