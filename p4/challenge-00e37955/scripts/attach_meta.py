@@ -55,6 +55,18 @@ def main() -> int:
                         stages[sf.stem.replace("_result", "")] = json.loads(sf.read_text(encoding="utf-8"))
                     except Exception:
                         continue
+            # 题面「运行状态」一行要的是"成功 / 部分完成 / 无法判断 / 拒答 + 原因 + 可接管位置"，
+            # 而机器字段 status 用的是 answered/partial/…：两套都给出，互不覆盖。
+            STATE = {"answered": "成功", "spec_ready": "成功", "partial": "部分完成",
+                     "needs_translation": "部分完成", "insufficient_evidence": "无法判断",
+                     "input_error": "拒答", "no_translation_input": "部分完成"}
+            st = str(payload.get("status"))
+            payload["run_state"] = STATE.get(st, "部分完成")
+            if payload["run_state"] != "成功":
+                payload.setdefault("run_state_reason",
+                                   (payload.get("gaps") or payload.get("uncertainties") or ["见 result.json"])[:3])
+                payload.setdefault("handover",
+                                   "完成标准未满足的部分见 gaps；材料齐备后重跑同一条命令即可接管")
             payload.setdefault("metadata_coverage", dims)
             payload.setdefault("inventory", "inventory.tsv")
             if dims.get("reproduce"):
