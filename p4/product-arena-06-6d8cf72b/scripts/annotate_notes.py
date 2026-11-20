@@ -46,18 +46,30 @@ except Exception:                        # the engine must still run without the
     def meta_attach(inp, out):
         return {"unavailable": True}
 
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from zz_author import dump_blocks, run_pair as author_run
+except Exception:                        # 缺件时退化为规则批注，不能因此崩掉
+    def dump_blocks(blocks, out, name="blocks.tsv"):
+        return 0
+
+    def author_run(path, blocks, out, spec):
+        return [], {"checks": {"all_passed": False}, "problems": ["zz_author 缺失"]}, False
+
 NUM = re.compile(r"(?<!\d)(\d+(?:\.\d+)?)\s*(%|°C|µm|um|nm|mm|cm|m|MPa|GPa|kPa|Hz|kHz|min|h|s|g|mg|kg|mL|L|"
                  r"J/mm³|cycles?|次)")
 CUE = {
     "definition": re.compile(r"\b(is defined as|refers to|we define|is called|denotes)\b|定义为|所称|指的是", re.I),
     "claim": re.compile(r"\b(we (?:find|show|conclude|argue)|indicat\w+|suggest\w+|therefore|thus|"
-                        r"demonstrat\w+|in conclusion)\b|表明|说明|因此|可见", re.I),
+                        r"demonstrat\w+|in conclusion)\b|表明|说明|因此|可见|"
+                        r"提高|提升|降低|减少|增加|显著|优于|更高|更低|差异|证明|支持", re.I),
     "method": re.compile(r"\b(we (?:printed|prepared|measured|tested|performed|collected|recorded)|"
                          r"was (?:printed|prepared|measured|tested)|protocol|procedure)\b|采用|制备|测试|测量", re.I),
     "limitation": re.compile(r"\b(limitation\w*|however|cannot|do(?:es)? not|caveat|future work|"
-                             r"remains? (?:to be|un))\b|局限|不足|然而|无法|尚需", re.I),
+                             r"remains? (?:to be|un))\b|局限|不足|然而|无法|尚需|"
+                             r"未考察|未考虑|样本量(?:较)?小|受限于|未来工作|进一步研究|有待", re.I),
     "question": re.compile(r"\b(unclear|unknown|not (?:yet )?(?:clear|known|determined)|open question|"
-                           r"to be determined)\b|尚不清楚|未知|有待|是否", re.I),
+                           r"to be determined)\b|尚不清楚|尚不明确|未知|是否|待验证", re.I),
 }
 SKIP = ("output-contract", "instruction", "example-input", "public-manifest", "resources.yaml", "schema",
         "spec", "readme", "skill", "task", "case.json")
@@ -116,7 +128,9 @@ def sentences(text: str) -> list[dict]:
             continue
         for sidx, s in enumerate(re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", p), 1):
             t = norm(s)
-            if len(t) >= 25:
+            # 中文一句结论常常只有十几个字（"样本量较小，未考察…"），按 latin 的 25 字门槛会整类丢掉
+            cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
+            if len(t) >= (12 if cjk >= 8 else 25):
                 out.append({"locator": f"p{pno}s{sidx}", "text": t})
     return out
 
@@ -128,6 +142,43 @@ def classify(sent: str) -> str:
     if NUM.search(sent):
         return "evidence"
     return "context"
+
+
+# 第二阶段（模型写 notes.json）的条目契约：六类批注 + 逐字引文 + 阶段一定位 + 一句依据
+NOTES_SPEC = {
+    "name": "notes",
+    "list_keys": ("notes", "items", "annotations"),
+    "required": ("note_type", "quote", "locator", "why"),
+    "enums": {"note_type": ("definition", "claim", "evidence", "method", "limitation", "question")},
+    "min_items": 4, "text_field": "quote", "quote_field": "quote", "note_field": "why", "note_min": 12,
+    "locator_field": "locator", "id_field": "id", "quote_min": 10,
+}
+
+
+def material_blocks(docs: list[dict]) -> list[dict]:
+    """第一阶段：每篇文档的段落块，locator = 文件名#pN（模型写作与校验共用同一套定位）。"""
+    blocks: list[dict] = []
+    for d in docs:
+        for pno, para in enumerate(re.split(r"\n\s*\n", d["text"]), 1):
+            t = norm(para).lstrip("#*-> ").strip()
+            if len(t) >= 12:
+                blocks.append({"locator": f'{d["doc"]}#p{pno}', "text": t})
+    return blocks
+
+
+def notes_from_model(items: list[dict]) -> list[dict]:
+    anns: list[dict] = []
+    for i, it in enumerate(items, 1):
+        quote = norm(it.get("quote"))
+        loc = str(it.get("locator") or "")
+        doc = loc.split("#")[0] if "#" in loc else ""
+        nums = [f"{m.group(1)} {m.group(2)}" for m in NUM.finditer(quote)][:3]
+        kind = str(it.get("note_type") or "claim")
+        anns.append({"id": f"A{i}", "type": kind, "doc": doc, "locator": loc,
+                     "sentence": quote[:400], "numbers": nums,
+                     "tags": [kind] + (["has_number"] if nums else []),
+                     "note": norm(it.get("why"))[:300]})
+    return anns
 
 
 def annotate(docs: list[dict], cap_per_doc: int = 60) -> list[dict]:
@@ -213,6 +264,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", default="/input")
     ap.add_argument("--output", default="/app/output")
+    ap.add_argument("--blocks", action="store_true", help="只写 blocks.tsv（模型写作的唯一定位来源）")
+    ap.add_argument("--verify-notes", default=None, help="校验模型交回的 notes.json")
+    ap.add_argument("--run-all", action="store_true",
+                    help="一次性：blocks.tsv → 有 notes.json 且过校验就用它 → 出笔记 → attach_meta")
     args = ap.parse_args()
     inp, out = Path(args.input), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
@@ -238,7 +293,26 @@ def main() -> int:
             ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
         return 0
-    anns = annotate(docs)
+    blocks = material_blocks(docs)
+    model_items: list[dict] = []
+    notes_report: dict = {}
+    if args.blocks:
+        n = dump_blocks(blocks, out)
+        print(json.dumps({"case_id": case_id, "blocks": n, "blocks_tsv": str(out / "blocks.tsv")},
+                         ensure_ascii=False))
+        return 0
+    if args.verify_notes:
+        items, rep, ok = author_run(Path(args.verify_notes), blocks, out, NOTES_SPEC)
+        print(json.dumps(rep, ensure_ascii=False))
+        return 0 if ok else 1
+    if args.run_all:
+        dump_blocks(blocks, out)
+        cand = out / "notes.json"
+        if cand.is_file():
+            model_items, notes_report, ok = author_run(cand, blocks, out, NOTES_SPEC)
+            if not ok:
+                model_items = []
+    anns = notes_from_model(model_items) if model_items else annotate(docs)
     groups = themes(anns)
     by_id = {a["id"]: a for a in anns}
     with (out / "annotations.tsv").open("w", encoding="utf-8") as fh:
@@ -288,8 +362,14 @@ def main() -> int:
         "theme_ids_resolve": all(i in by_id for g in groups for i in g["ids"]),
         "type_counts_reconcile": sum(Counter(a["type"] for a in anns).values()) == len(anns),
     }
+    if model_items:
+        mchk = notes_report.get("checks", {})
+        checks["model_quotes_verbatim"] = bool(mchk.get("quotes_verbatim"))
+        checks["model_locators_from_stage1"] = bool(mchk.get("locators_from_stage1"))
+        checks["model_types_in_enum"] = bool(mchk.get("enums_valid"))
     checks["all_passed"] = all(checks.values())
     payload = {"case_id": case_id, "status": "answered" if anns else "insufficient_evidence",
+               "authored_by": "model" if model_items else "script",
                "annotations": {"total": len(anns), "by_type": dict(Counter(a["type"] for a in anns)),
                                "files": ["annotations.tsv", "notes.jsonl"]},
                "themes": [{"theme": g["label"], "count": g["count"], "ids": g["ids"]} for g in groups],
@@ -306,7 +386,13 @@ def main() -> int:
     (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps({"case_id": case_id, "annotations": len(anns), "themes": len(groups),
                       "by_type": payload["annotations"]["by_type"],
+                      "authored_by": payload["authored_by"],
                       "all_passed": checks["all_passed"]}, ensure_ascii=False))
+    if args.run_all:
+        meta = Path(__file__).resolve().parent / "attach_meta.py"
+        if meta.is_file():
+            subprocess.run([sys.executable, str(meta), "--input", str(inp), "--output", str(out)],
+                           capture_output=True, text=True, timeout=300)
     return 0
 
 
