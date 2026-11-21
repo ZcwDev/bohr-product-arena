@@ -62,11 +62,15 @@ def main() -> int:
                      "input_error": "拒答", "no_translation_input": "部分完成"}
             st = str(payload.get("status"))
             payload["run_state"] = STATE.get(st, "部分完成")
+            # 交接指针必须指向真存在的东西：以前 handover 写"见 gaps"，而 payload 里往往没有 gaps 键。
+            payload.setdefault("gaps", [])
             if payload["run_state"] != "成功":
-                payload.setdefault("run_state_reason",
-                                   (payload.get("gaps") or payload.get("uncertainties") or ["见 result.json"])[:3])
+                reason = (payload.get("gaps") or payload.get("uncertainties") or ["见 result.json"])[:3]
+                payload.setdefault("run_state_reason", reason)
                 payload.setdefault("handover",
-                                   "完成标准未满足的部分见 gaps；材料齐备后重跑同一条命令即可接管")
+                                   "未满足项见 run_state_reason / gaps；材料齐备后重跑同一条命令即可接管")
+                payload.setdefault("can_take_over_at",
+                                   {"unmet": reason, "rerun": "python3 scripts/<entry>.py --input /input --output /app/output"})
             payload.setdefault("metadata_coverage", dims)
             payload.setdefault("inventory", "inventory.tsv")
             if dims.get("reproduce"):
