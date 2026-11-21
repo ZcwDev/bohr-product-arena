@@ -124,6 +124,10 @@ def sentences(text: str) -> list[dict]:
     out = []
     for pno, para in enumerate(re.split(r"\n\s*\n", text), 1):
         p = norm(para).lstrip("#*-> ")
+        # a section word glued to its paragraph ("Methods Porosity was measured…") is a heading artifact, not
+        # part of the sentence; strip it before splitting so the annotation quotes start at the real content.
+        p = re.sub(r"^(Abstract|Introduction|Methods?|Results?|Discussion|Conclusions?|Limitations?|"
+                   r"摘要|引言|方法|结果|讨论|结论|局限)\s+(?=[A-Z\u4e00-\u9fff])", "", p)
         if len(p) < 20:
             continue
         for sidx, s in enumerate(re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", p), 1):
