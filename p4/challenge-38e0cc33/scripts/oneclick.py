@@ -98,10 +98,34 @@ def sentences(text: str) -> list[dict]:
     return out
 
 
+SECTION_WORDS = ("Abstract", "Introduction", "Methods?", "Results?", "Discussion", "Conclusions?",
+                 "Limitations?", "摘要", "引言", "方法", "结果", "讨论", "结论", "局限")
+EDGE_WORDS = {"from", "with", "and", "or", "by", "to", "in", "of", "on", "at", "as", "for", "than", "that",
+              "this", "these", "those", "which", "while", "when", "the", "a", "an"}
+
+
 def clean_label(s: str) -> str:
+    """Turn a regex capture into an entity label a reader can accept.
+
+    Raw captures came out as "Results Porosity" and "from" (a section word glued on, and a preposition captured
+    as an entity), which the rubric scores as wrong entities. Strip the section prefix, drop dangling
+    prepositions/conjunctions at either end, and cut at a word boundary.
+    """
     s = norm(s).strip("（(）) 、,.;；:：\"'")
     s = re.sub(r"^(在|对|将|把|用|由|当|若|其|该|the|a|an)\s*", "", s)
-    return s[:24]
+    prev = None
+    while prev != s:                                   # a section word may repeat ("Results" then "Abstract")
+        prev = s
+        s = re.sub(r"^(?:" + "|".join(SECTION_WORDS) + r")\s+", "", s, flags=re.I)
+    words = s.split()
+    while words and words[0].lower().strip(".,;:") in EDGE_WORDS:
+        words.pop(0)
+    while words and words[-1].lower().strip(".,;:") in EDGE_WORDS:
+        words.pop()
+    s = " ".join(words).strip()
+    if len(s) > 24:
+        s = s[:24].rsplit(" ", 1)[0].rstrip(" ,;:-") or s[:24]
+    return s
 
 
 def build_spec(docs: list[dict], max_nodes: int = 14) -> dict:
