@@ -168,8 +168,25 @@ def build_spec(docs: list[dict], max_nodes: int = 14) -> dict:
         if m:
             title = norm(m.group(1))
             break
+    # 题面要求"实体、关系、图例和数据映射正确"：结构边不留 "→"（零信息），改成有类型的"包含"，
+    # 并显式给出图例（否则渲染器会拿小节名当关系名拼图例，"图例正确"这一项就不成立）。
+    kept = []
+    for e in edges:
+        lab = str(e.get("label") or "").strip()
+        kept.append(dict(e, label="包含") if lab in ("", "→", "-") else e)
+    kinds = []
+    for e in kept:
+        lab = str(e.get("label") or "").strip()
+        if lab and lab not in kinds:
+            kinds.append(lab)
+    legend = [{"type": "default",
+               "label": (f"{k}（结构层级，非原文关系词）" if k == "包含" else f"{k}（关系词取自原文）")}
+              for k in kinds[:4]]
+    if legend:
+        legend.append({"type": "default", "label": "每个图元都带 locator 与逐字引文，见 provenance.md"})
     return {"schema_version": "figure-spec/v1", "title": title or "科研示意图",
-            "nodes": list(nodes.values())[:max_nodes], "edges": edges[:40], "width": 1180}
+            "nodes": list(nodes.values())[:max_nodes], "edges": kept[:40], "legend": legend,
+            "width": 1180}
 
 
 def chart_spec(paths: list[Path]) -> dict | None:
