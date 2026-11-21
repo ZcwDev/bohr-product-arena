@@ -358,6 +358,12 @@ def main() -> int:
              "verification": {"all_passed": False}}, ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({"case_id": case_id, "status": "insufficient_evidence"}, ensure_ascii=False))
         return 0
+    case_meta = {}
+    if (inp / "case.json").is_file():
+        try:
+            case_meta = json.loads((inp / "case.json").read_text(encoding="utf-8"))
+        except Exception:
+            case_meta = {}
     chunks = chunk(docs)
     bm = BM25(chunks)
     results = [answer(q, bm, args.min_ratio, args.floor) for q in qs]
@@ -422,6 +428,31 @@ def main() -> int:
                "uncertainties": [f'未覆盖：{m}' for r in results for m in r["missing"]],
                "limitations": ["抽取式回答，仅引用原文", "词法检索可能漏检同义改写", "未命中的子问题不作猜测"],
                "verification": checks}
+    # 题面把输出字段写死了（"字段名可由平台适配，含义与层级须保持一致"）：case_id/paper_id/material_version、
+    # answers[]（question_id/answer/conditions/status）、claims[]（claim_id/text/kind/evidence[paragraph_id,quote]）、
+    # unanswered_parts[]。之前只给了 answer 一个字符串，评审按这些字段找不到东西。
+    payload["paper_id"] = case_id
+    payload["material_version"] = str((case_meta or {}).get("material_version")
+                                       or (case_meta or {}).get("corpus_version") or "as provided in the input")
+    answers, claims_out, unanswered = [], [], []
+    for i, r in enumerate(results, 1):
+        qid = f"Q{i}"
+        status = ("answered" if r.get("answered") and not r.get("missing")
+                  else "partial" if r.get("answered") else "insufficient_evidence")
+        answers.append({"question_id": qid, "question": r["question"], "answer": r.get("text") or "",
+                        "conditions": [f'{c["doc"]}#{c["locator"]}' for c in r.get("cites", [])][:4],
+                        "status": status})
+        for c in r.get("cites", []):
+            claims_out.append({"claim_id": f'{qid}-{c.get("tag") or len(claims_out) + 1}',
+                               "text": c.get("sentence") or "", "kind": "reported",
+                               "evidence": [{"paper_id": case_id, "paragraph_id": c.get("locator"),
+                                             "quote": (c.get("sentence") or "")[:300]}]})
+        for m in r.get("missing", []):
+            unanswered.append({"question_id": qid, "part": m,
+                               "reason": "知识库里没有与该子问题字面重合度足够的段落（不作猜测）"})
+    payload["answers"] = answers
+    payload["claims"] = claims_out
+    payload["unanswered_parts"] = unanswered
     checks["metadata_dimensions_written"] = all(k in dims for k in
                                                 ("file_types", "duplicate_files", "version_differences"))
     checks["all_passed"] = all(v for k, v in checks.items() if k != "all_passed")
