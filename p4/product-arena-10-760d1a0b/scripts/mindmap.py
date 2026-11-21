@@ -137,6 +137,23 @@ QUESTION = re.compile(r"\b(aim|objective|goal|we (?:investigate|examine|ask)|res
 GAP = re.compile(r"\b(unknown|unclear|not (?:yet|been) (?:studied|addressed)|remains? to be)\b", re.I)
 
 
+def short_label(text: str, limit: int = 28) -> str:
+    """A map node reads best as a head phrase, not as a whole sentence.
+
+    The quote column keeps the full sentence for verifiability; the label is what a reader scans. Cut at the
+    first clause boundary inside the limit, otherwise clip at a word boundary.
+    """
+    t = norm(text)
+    if len(t) <= limit:
+        return t
+    window = t[:limit]
+    for sep in ("，", "；", "。", ",", ";", ":"):
+        index = window.rfind(sep)
+        if index >= 6:
+            return window[:index].rstrip(" ,;:-")
+    return clip(t, limit)
+
+
 def clip(text: str, limit: int = 104) -> str:
     """Cut a label at a word boundary: a label ending in "Nylon, a" reads as broken text."""
     t = norm(text)
@@ -379,8 +396,13 @@ def build_graph(blocks: list[dict], units: list[dict], case_id: str, max_nodes: 
 
     def add(label: str, kind: str, locator: str, quote: str, parent: str | None,
             evidence_type: str = "fact") -> str:
+        label = short_label(label)
+        # the same sentence often appears twice (page furniture, a repeated heading): keep one node per
+        # (locator, label) pair so the map does not show twins and max_depth stays meaningful
+        if any(n["label"] == label and n["locator"] == locator for n in nodes):
+            return next(n["id"] for n in nodes if n["label"] == label and n["locator"] == locator)
         nid = f"N{len(nodes) + 1:03d}"
-        nodes.append({"id": nid, "parent": parent, "label": clip(label), "kind": kind,
+        nodes.append({"id": nid, "parent": parent, "label": label, "kind": kind,
                       "locator": locator, "quote": norm(quote)[:400],
                       "evidence_type": evidence_type, "quote_sha256": sha(norm(quote))[:16]})
         if parent:
