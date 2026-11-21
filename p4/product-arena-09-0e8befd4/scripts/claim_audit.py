@@ -322,11 +322,22 @@ def main() -> int:
         idx = 0
         for name, text in texts:
             for pno, para in enumerate(re.split(r"\n\s*\n", text), 1):
-                for sent in re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", norm(para)):
+                para = re.sub(r"^\s*#{1,6}\s*", "", norm(para))       # a heading prefix is not part of a claim
+                for sent in re.split(r"(?<=[。！？])|(?<=[A-Za-z\)\]][.!?])\s+", para):
                     t = norm(sent)
                     # a Chinese assertion is complete well before 18 characters of latin
                     cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
                     has_num = bool(NUM.search(t))
+                    # a protocol sentence ("was measured by…") is not a claim: keep it only when nothing else
+                    # in the document asserts anything, so the nanopublication list stays about findings.
+                    protocol = re.search(r"\b(?:(?:was|were|we)\s+(?:measured|performed|printed|prepared|recorded|"
+                                         r"collected|randomised|randomized|tested))\b|采用|测量|打印|制备|测试", t, re.I)
+                    # a section word glued to the paragraph ("Results Porosity decreased…") is a heading artifact
+                    t = re.sub(r"^(Abstract|Introduction|Methods|Results|Discussion|Conclusions?|Limitations|"
+                               r"摘要|引言|方法|结果|讨论|结论|局限)\s+(?=[A-Z\u4e00-\u9fff])", "", t)
+                    if protocol and not re.search(r"(decreas|increas|improv|reduc|higher|lower|significant|"
+                                                  r"降低|提高|显著|差异)", t, re.I):
+                        continue
                     if len(t) >= (12 if cjk >= 8 else 18) and (pat.search(t) or has_num):
                         idx += 1
                         claims.append({"claim_id": f"N{idx:02d}", "text": t[:300], "orig": [],
