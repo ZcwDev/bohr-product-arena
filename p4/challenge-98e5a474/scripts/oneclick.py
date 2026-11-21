@@ -48,11 +48,13 @@ except Exception:
         return {"unavailable": True}
 
 REL_ZH = re.compile(r"(?P<a>[\u4e00-\u9fffA-Za-z0-9\-]{2,14})\s*"
-                    r"(促进|抑制|激活|上调|下调|导致|引起|影响|提高|降低|增强|减弱|作用于|结合|转运)\s*"
+                    r"(促进了|抑制了|激活了|上调了|下调了|导致了|引起了|影响了|提高了|降低了|增强了|减弱了|"
+                     r"促进|抑制|激活|上调|下调|导致|引起|影响|提高|降低|增强|减弱|作用于|结合|转运)\s*"
                     r"(?P<b>[\u4e00-\u9fffA-Za-z0-9\-]{2,14})")
 REL_EN = re.compile(r"(?P<a>[A-Za-z][A-Za-z0-9\-]{2,28}(?:\s+[A-Za-z][A-Za-z0-9\-]{2,28}){0,3})\s+"
-                    r"(increases?|decreases?|inhibits?|activates?|promotes?|affects?|reduces?|elevates?|"
-                    r"suppresses?|binds)\s+"
+                    r"(increas(?:es?|ed)|decreas(?:es?|ed)|inhibit(?:s|ed)?|activat(?:es?|ed)|promot(?:es?|ed)|"
+                    r"affect(?:s|ed)?|reduc(?:es?|ed)|elevat(?:es?|ed)|suppress(?:es?|ed)|"
+                    r"bind(?:s|ing)?|improv(?:es?|ed)|enhanc(?:es?|ed)|lower(?:s|ed)?|rais(?:es?|ed))\s+"
                     r"(?P<b>[A-Za-z][A-Za-z0-9\-]{2,28}(?:\s+[A-Za-z][A-Za-z0-9\-]{2,28}){0,3})", re.I)
 SKIP = ("output-contract", "instruction", "skill", "readme", "case.json", "resources.yaml")
 
@@ -284,7 +286,8 @@ def main() -> int:
          "node_labels": [n["label"] for n in spec["nodes"]]},
         ensure_ascii=False, indent=1), encoding="utf-8")
     payload = {"case_id": case_id,
-               "status": "answered" if checks["nodes_present"] and docs else "insufficient_evidence",
+               "status": ("answered" if checks["nodes_present"] and docs and spec.get("edges")
+                          else "partial" if docs and spec.get("nodes") else "insufficient_evidence"),
                "artifacts": {"figure": "figure.svg", "png": png, "pdf": pdf, "spec": "diagram.json",
                              "chart_spec": "chart.json" if chart else None,
                              "engine": engine, "nodes": len(spec["nodes"]), "edges": len(spec["edges"])},
