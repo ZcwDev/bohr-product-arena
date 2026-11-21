@@ -462,10 +462,13 @@ def text_fallback(inp: Path, out: Path, case_id: str) -> dict | None:
             unreadable.append({"file": f.name, "reason": "no text layer"})
             continue
         for pno, para in enumerate(re.split(r"\n\s*\n", text), 1):
-            head = re.match(r"^\s{0,3}(#{1,4})\s+(.+)$", para.strip())
-            if head:
-                sections.append({"file": f.name, "locator": f"p{pno}", "level": len(head.group(1)),
-                                 "title": head.group(2).strip()[:120]})
+            # a heading is often the first LINE of a paragraph, not the whole paragraph ("## Abstract\ntext…"),
+            # so scan line by line -- matching the whole block found only a document's very first title.
+            for line in para.splitlines():
+                head = re.match(r"^\s{0,3}(#{1,4})\s+(.+)$", line.strip())
+                if head:
+                    sections.append({"file": f.name, "locator": f"p{pno}", "level": len(head.group(1)),
+                                     "title": head.group(2).strip()[:120]})
             for cap in re.finditer(r"(图|表|Fig(?:ure)?|Table)\s*\.?\s*(\d+)\s*[:：]?\s*(.{0,120})", para):
                 captions.append({"file": f.name, "locator": f"p{pno}", "label": cap.group(0)[:60].strip(),
                                  "kind": "figure" if cap.group(1) in {"图", "Fig", "Figure"} else "table"})
