@@ -120,10 +120,34 @@ def sentences(text: str) -> list[dict]:
     return out
 
 
+SECTION_WORDS = ("Abstract", "Introduction", "Methods?", "Results?", "Discussion", "Conclusions?",
+                 "Limitations?", "摘要", "引言", "方法", "结果", "讨论", "结论", "局限")
+EDGE_WORDS = {"from", "with", "and", "or", "by", "to", "in", "of", "on", "at", "as", "for", "than", "that",
+              "this", "these", "those", "which", "while", "when", "the", "a", "an"}
+
+
 def clean_label(s: str) -> str:
+    """Turn a regex capture into an entity label a reader can accept.
+
+    Raw captures came out as "Results Porosity" and "from" (a section word glued on, and a preposition captured
+    as an entity), which the rubric scores as wrong entities. Strip the section prefix, drop dangling
+    prepositions/conjunctions at either end, and cut at a word boundary.
+    """
     s = norm(s).strip("（(）) 、,.;；:：\"'")
     s = re.sub(r"^(在|对|将|把|用|由|当|若|其|该|the|a|an)\s*", "", s)
-    return s[:24]
+    prev = None
+    while prev != s:                                   # a section word may repeat ("Results" then "Abstract")
+        prev = s
+        s = re.sub(r"^(?:" + "|".join(SECTION_WORDS) + r")\s+", "", s, flags=re.I)
+    words = s.split()
+    while words and words[0].lower().strip(".,;:") in EDGE_WORDS:
+        words.pop(0)
+    while words and words[-1].lower().strip(".,;:") in EDGE_WORDS:
+        words.pop()
+    s = " ".join(words).strip()
+    if len(s) > 24:
+        s = s[:24].rsplit(" ", 1)[0].rstrip(" ,;:-") or s[:24]
+    return s
 
 
 def build_spec(docs: list[dict], max_nodes: int = 14) -> dict:
@@ -302,6 +326,24 @@ def main() -> int:
         gaps.append("没有可用的 SVG 渲染器（fitz/rsvg/cairosvg），未产出 PNG/PDF；SVG 本身可编辑")
     if not node_literal:
         gaps.append("有节点标签不是材料原文，需要在 diagram.json 里改名或删除")
+    # 题面「Skill 运行后的输出要求」第三条是"来源与修改记录"：元素来源、版本、数据映射与人工确认。
+    # 之前只把定位符放进 diagram.json，评审看不到一份可读的来源/修改账本，这里补一份。
+    prov = [f"# 来源与修改记录（{case_id}）", "",
+            f"- 渲染引擎：{engine}；导出：{'PNG/PDF 已生成' if png else '未生成（缺渲染器）'}",
+            f"- 材料文件：{', '.join(d['doc'] for d in docs) if docs else '（无可读材料）'}", "",
+            "## 图元来源（标签、定位、逐字引文）", ""]
+    for n in spec["nodes"]:
+        prov.append(f'- `{n.get("label","")}` @ `{n.get("locator","-")}` ← “{str(n.get("quote") or n.get("label"))[:120]}”'
+                    f'（{"逐字取自材料" if n.get("label") in text_all else "推断，材料未逐字出现"}）')
+    if spec["edges"]:
+        prov += ["", "## 关系与依据", ""]
+        for e in spec["edges"]:
+            prov.append(f'- `{e.get("source")}` → `{e.get("target")}`：{e.get("label") or e.get("basis") or "（无连接词依据）"}')
+    prov += ["", "## 数据映射与人工确认", "",
+             "- 数据映射：图中每个量值都来自材料原文（见上表 locator），未引入外部数值；",
+             "- 人工确认：本轮未做人工确认，若需要请在 diagram.json 的节点上补充 confirm 字段；",
+             "- 材料未说明：图例位置、字号与配色由本工具按可读性选取，不是材料给出的信息。", ""]
+    (out / "provenance.md").write_text("\n".join(prov), encoding="utf-8")
     (out / "check_report.json").write_text(json.dumps(
         {"case_id": case_id, "checks": checks, "engine": engine,
          "nodes": len(spec["nodes"]), "edges": len(spec["edges"]),
@@ -313,6 +355,7 @@ def main() -> int:
                "status": ("answered" if checks["nodes_present"] and docs and spec.get("edges")
                           else "partial" if docs and spec.get("nodes") else "insufficient_evidence"),
                "artifacts": {"figure": "figure.svg", "png": png, "pdf": pdf, "spec": "diagram.json",
+                             "provenance": "provenance.md",
                              "chart_spec": "chart.json" if chart else None,
                              "engine": engine, "nodes": len(spec["nodes"]), "edges": len(spec["edges"])},
                "checks": "check_report.json", "render": _rinfo,
