@@ -90,6 +90,7 @@ bash "$SKILL_DIR"/scripts/run_case.sh --input /input --output /app/output --work
 | **第一版完整结果** | **≤ 70%（≈ 10 分钟内）** | **`/app/output/result.json`（契约字段齐全，允许字段值为 `partial`）** |
 | 校对与补漏 | 剩余 | 覆盖写 `result.json`，保留 `change_log`/`uncertainties` 的增量 |
 
+
 规则：
 
 1. **先写一版能过 `contract.py check` 的结果**，再改进。不允许把「还在读材料」当成完成态。
@@ -109,6 +110,7 @@ bash "$SKILL_DIR"/scripts/run_case.sh --input /input --output /app/output --work
 5. 状态：读到值 → `reported`；材料没写 → `not_reported`（不是 0）；两处材料互斥 → `source_conflict` 并给两处定位符；解析失败 → `extraction_failed` 并给出失败点。
 6. 输出 `result.json`：`result.fields[]` 每项含 field_id/scalar/units/statistic/condition/comparator/status/paragraph_id/quote。
 7. `claims` 记录字段级结论，`uncertainties` 记录未报告与冲突清单。
+6. **单次回答保持简短**（≤ 300 字、≤ 2000 tokens）：评测里主要耗时是模型往返，不是脚本；不要复述文件内容、不要每步都总结，能一次 `python3 <脚本>` 解决的就不要拆成多轮对话。
 
 每一步的中间产物都写到 `/app/work/`，最后一步才组装 `/app/output/result.json`；
 中途被截断时，`/app/output/` 里必须已经有一份能过契约校验的部分结果。
