@@ -95,6 +95,7 @@ python3 "$SKILL_DIR"/scripts/run_case.py probe --case /input/case.json
 | **第一版完整结果** | **≤ 70%（≈ 10 分钟内）** | **`/app/output/result.json`（契约字段齐全，允许字段值为 `partial`）** |
 | 校对与补漏 | 剩余 | 覆盖写 `result.json`，保留 `change_log`/`uncertainties` 的增量 |
 
+
 规则：
 
 1. **先写一版能过 `contract.py check` 的结果**，再改进。不允许把「还在读材料」当成完成态。
@@ -113,6 +114,7 @@ python3 "$SKILL_DIR"/scripts/run_case.py probe --case /input/case.json
 4. 评分器必须容错：缺字段、类型错、空答案各计 0 而不是崩溃；把异常计数写进汇总。
 5. 附一组内置示例（synthetic，明确标注）跑出示例分数，证明工具可运行。
 6. 写用法与限制：适用任务族、不判什么（不判科学正确性）、如何扩展检查项。
+6. **单次回答保持简短**（≤ 300 字、≤ 2000 tokens）：评测里主要耗时是模型往返，不是脚本；不要复述文件内容、不要每步都总结，能一次 `python3 <脚本>` 解决的就不要拆成多轮对话。
 
 每一步的中间产物都写到 `/app/work/`，最后一步才组装 `/app/output/result.json`；
 中途被截断时，`/app/output/` 里必须已经有一份能过契约校验的部分结果。
