@@ -1,145 +1,272 @@
 ---
-name: revflow-manuscript-revision
-description: Run a real, versioned local manuscript revision workflow on a supplied paper or thesis chapter set — imports the manuscript as immutable blocks, proposes one source-grounded editorial annotation per organizer target, records accept/reject per change, compares versions, performs an actual rollback and reapply, injects labelled invalid operations that leave state unchanged, and exports an editable DOCX with a rendered PDF/PNG preview plus an evidence map and change log. Use for 学术写作客户端 / 学位论文与长文档写作 / any task that supplies an organizer-edit-workorder.json with target_ids.
+name: weekly-challenge-32c0210d
+description: 当任务属于「学位论文与长文档写作」这一类——长文档的一致性工程：章节编号、交叉引用、图表编号、术语、参考文献、摘要与结论呼应，全部可机械校验。…——需要按案例契约产出可核验结果时使用；提供可执行流程与机检器，所有结论回到材料定位符。
 ---
 
 ## 立刻执行（不要探索）
 
-这是一个**单命令** skill。评测里请**直接执行下面这一行**，不要读脚本、不要重新实现、不要先做仓库审计：
+单命令 skill。评测里请**直接执行下面这一行**，不要读脚本、不要重实现、不要先做仓库审计：
 
 ```bash
-python3 /skills/weekly-skill/scripts/revflow.py --work /app/work/revflow run --input /input --output /app/output --fresh
+python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
+  --work /app/work/run
 ```
 
-- 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件，就表示本次案例完成（不要叫 results.json / output.json）；把该命令打印的 JSON 当作结论。
-- 如果本机没有 `/input`（例如工作区里是 `inputs/`），就用工作目录里的 `inputs` 与 `out` 替换路径；**不要自造案例、不要另建 portability/selftest 目录**。
-- 收工前清理输出目录：**只允许 `result.json` 与 skill 产出的交付物**；任何 `edge-test*`、`portability*`、`example-run`、`selftest*` 目录都要删掉——评测方会把这些当成自造案例，直接判 0。
-- `result.json.case_id` 必须与 `/input/case.json` 里的 `case_id` **逐字一致**，不得自行编号（T01/demo 之类一律判 0）。
-- 如果 `/input` 的材料读不出来，就**如实报 `status: input_error`**；**绝对不要自造案例、不要用 /tmp 下的测试材料充数**。
-- **`case_id` 只能从 `/input/case.json` 逐字复制**；自己编号（T01 / TEST-SYNTH-001 / demo / caseA）一律判 0。
-- 只在这个命令**报错**时，才按下面的“失败处理”表逐条排查。
-- 每个案例都是同一行命令；多个案例就重复执行（输出目录按案例分开）。
+- 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件即完成（不要叫 results.json）。
+- **`case_id` 只能从 `/input/case.json` 逐字复制**；自编号一律判 0。
+- 没有 `/input` 时用 `inputs/` 与 `out/`；**不要自造案例**；收工前删 `edge-test*`/`portability*`/`example-run`。
+- `run.py` 支持 `--authoring <file>` 传入人工/模型写好的补充内容；没有该文件时只用材料里的事实。
 
----
 
-# revflow — manuscript revision workflow
+# 学位论文与长文档写作｜每周技能（weekly-skill）
 
-## What problem this solves
+本 Skill 面向「学位论文与长文档写作」这一类任务：当任务属于「学位论文与长文档写作」这一类——长文档的一致性工程：章节编号、交叉引用、图表编号、术语、参考文献、摘要与结论呼应，全部可机械校验。…——需要按案例契约产出可核验结果时使用；提供可执行流程与机检器，所有结论回到材料定位符。
 
-Most "AI writing" deliverables are one rewritten paragraph. The organizer workorder for these
-tasks asks for something else: an **import/task receipt**, **per-change accept or reject**,
-**version comparison with a real rollback and reapply**, **controlled invalid operations that
-leave state byte-identical**, and an **editable manuscript with original/revised records, an
-evidence map and a real export preview**. A rewritten paragraph satisfies none of that, because a
-rewrite cannot show what was preserved, cannot be rolled back, and cannot be checked line by line.
+它交付的是**可执行的流程 + 可机检的检查器**，不是一段提示词。所有判断都能回到材料里的定位符，
+所有检查都能用命令复跑。
 
-`revflow` is a small versioned store plus a CLI that performs each of those operations for real
-and stamps a receipt for every one. Nothing is narrated: every claim in `result.json` points at a
-file that was produced by an operation that actually ran.
 
-## When to use
-
-Trigger when the task input contains any of:
-
-- `organizer_edit_workorder` (in `case.json` or a separate `organizer-edit-workorder.json`) with
-  `target_ids`, `task`, `operation_requirements`, `consistency_scope`;
-- instructions like "add a source-grounded editorial annotation at each target", "operate a real
-  local revision workflow", "preserve original paragraph text, tables, formulas, citations";
-- 学术写作客户端 / 学位论文 / 长文档 / 改稿 / 审稿回复 tasks with paragraph-level edit targets.
-
-Do **not** use it when the task is to translate, summarise, or build a deck — see the sibling
-skills for those.
-
-## One command
+## 0. 第一步永远是读案例契约（不要跳过）
 
 ```bash
-python3 /skills/weekly-skill/scripts/revflow.py \
-    --work /app/work/revflow run --input /input --output /app/output --fresh
+# 本 Skill 在评测环境里的安装位置（找不到就全局搜一下）
+SKILL_DIR=${SKILL_DIR:-/skills/weekly-skill}
+if [ ! -f "$SKILL_DIR/SKILL.md" ]; then
+  SKILL_DIR=$(dirname "$(find / -name SKILL.md -not -path '*/node_modules/*' 2>/dev/null | grep -i week | head -1)")
+fi
+echo "SKILL_DIR=$SKILL_DIR"; ls "$SKILL_DIR"
+ls -la /input/ 2>/dev/null; ls -la /app/work 2>/dev/null
+python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path("/input/case.json")
+print(p.read_text(encoding="utf-8")[:4000] if p.is_file() else "no /input/case.json")
+PY
 ```
 
-Runtime: a few seconds plus one LibreOffice conversion. No model calls, no network, so it cannot
-exhaust the 64-request / 900-second budget and it produces the same bytes on every repetition.
+- `case_id` 必须**逐字**复制到结果里；缺失就直接报 `input_error`，不要猜。
+- 案例契约里出现的字段名、枚举值（如 `answered|partial|insufficient_evidence|input_error`）**优先于**本 Skill 自己的措辞。
+- 材料路径以实际 `ls` 结果为准；题面提到的文件名可能不存在。
 
-The script finds its own inputs: `case.json` (or any JSON carrying `organizer_edit_workorder`),
-`organizer-edit-workorder.json`, and the densest PDF/DOCX/MD/TXT under `/input` as the
-manuscript. Paragraph ids follow the organizer's own scheme (`C01-P002`); if an id is absent the
-number suffix is used as an ordinal, and if the paragraph is front matter the annotation moves to
-the nearest substantive paragraph **and says so** in the annotation text and the change log.
+只要上面任何一步对不上，**先按题面修正契约再干活**。
 
-## Outputs (all under `--output`)
 
-| file | what it is |
-|-|-|
-| `result.json` | `case_id`, `deliverable`, `preserved_facts`, `evidence_map`, `change_log`, `status`, `sources`, `uncertainty`, `limitations` — every value traceable to a file below |
-| `manuscript_revised.docx` | editable OOXML: original paragraphs verbatim, each annotation inserted after its anchor, label + evidence locator, TOC field, annotation/evidence table |
-| `export_preview.pdf` + `previews/page-*.png` | real LibreOffice render of that DOCX (falls back to a built-in text renderer if LibreOffice is absent, and says which one was used) |
-| `manuscript_original.md` | v1 record, unmodified |
-| `manuscript_revised.md` | final record, annotations inline with locators |
-| `evidence_map.tsv` | annotation → target id → material file → locator → exact quote → `verified_verbatim` |
-| `change_log.tsv` | every accepted/rejected/unresolved change with anchor + insertion hashes and whether a human must confirm |
-| `version_diff.md` | v1 → head comparison (annotations added/removed, blocks identical) |
-| `consistency_report.md` | terminology variants, in-text citation vs reference list, same-quantity numeric conflicts, unresolved conflicts |
-| `verification.json` | machine checks: original blocks byte-identical, no number lost, every quote verbatim, version chain contiguous |
+## 1. 本 Skill 做什么
 
-Receipts live in `--work` (`receipts/`): `import-receipt`, `task-receipt` (each workorder
-requirement mapped to the artifact that satisfies it), `proposal-receipt`, one
-`decision-receipt` per change, `compare-receipt`, `version-op-receipt` for rollback and reapply,
-`invalid-ops-receipt`, `consistency-receipt`, `export-receipt`, `verify-receipt`.
+长文档的一致性工程：章节编号、交叉引用、图表编号、术语、参考文献、摘要与结论呼应，全部可机械校验。
 
-## The operations, exposed as a CLI
 
-The single `run` command is a wrapper over these; each one is a real command you can call again:
+## 2. 输出契约（writing 家族）
+
+`/app/output/result.json`（同时镜像一份到 `/app/outputs/result.json`）：
+
+| 字段 | 要求 |
+|---|---|
+| `case_id` | 原样保留案例给的 id |
+| `deliverable` | 可编辑的目标文稿/结构化产物（给出文件路径 + 结构说明） |
+| `preserved_facts` | 数字、条件、术语、来源清单：每个事实给原值、出处定位符、是否被改动 |
+| `evidence_map` | 关键论断 → 来源定位的映射（逐条） |
+| `change_log` | 每次修改：动作、原因、人工确认项、未解决问题 |
+| `status` | 非 `answered` 时写 `partial`/`insufficient_evidence`，并在 `limitations` 说明 |
+
+可编辑件放在 `/app/output/` 下，文件名与 `deliverable` 里写的一致。
+
+
+## 2.5 时间与请求预算（先保交付，再谈完美）
+
+评测侧的硬约束：**64 次模型请求、900 秒、单次回答 16384 tokens**。本 Skill 的流程按这个预算设计：
+
+| 阶段 | 目标预算 | 必须落盘的东西 |
+|---|---|---|
+| 读契约 + 建索引 | ≤ 5% | `/app/work/blocks.json`（或等价中间表示） |
+| 抽取 / 生成 / 修改 | ≤ 55% | `/app/work/` 下的中间产物 |
+| **第一版完整结果** | **≤ 70%（≈ 10 分钟内）** | **`/app/output/result.json`（契约字段齐全，允许字段值为 `partial`）** |
+| 校对与补漏 | 剩余 | 覆盖写 `result.json`，保留 `change_log`/`uncertainties` 的增量 |
+
+规则：
+
+1. **先写一版能过 `contract.py check` 的结果**，再改进。不允许把「还在读材料」当成完成态。
+2. 每次覆盖 `result.json` 前先备份到 `/app/work/result.prev.json`，这样任何时刻磁盘上都有一份可用结果。
+3. 值不值得再花一次请求，用这个判据：*这次调用能不能让某个字段从 `not_reported`/`partial` 变成有据可查的值？*
+   不能就停手，把剩余时间用于写 `uncertainties` 与 `limitations`。
+4. 大材料不要整篇塞进上下文：先建索引（定位符），只取与当前字段相关的块。
+5. 宁可交一份「小但每条都能核验」的结果，也不要交一份「全但一半没定位符」的结果——
+   评审按**可核验性**扣分，缺项只要如实标注就不算错。
+
+## 3. 工作流程
+
+1. 建立长文档骨架 `outline.json`（章/节/子节编号 + 每节要点 + 预计图表），与模板要求比对。
+2. 分章生成/整理，每章写完立刻更新全局登记表：图 N、表 N、公式 N、引用键、术语。
+3. 交叉引用：正文中的“见表 N/如 §N.N 所述”与实际编号机器校验，禁止硬编码错号。
+4. 术语与摘要：全文术语表一致性 + 摘要必须覆盖各章主要结论（脚本对照关键词是否有落点）。
+5. 参考文献与引用双向一致；章节字数分布与模板建议比对。
+6. 导出 docx（标题层级 + 目录可用）+ 渲染预览；输出一致性报告写入 result.json。
+
+每一步的中间产物都写到 `/app/work/`，最后一步才组装 `/app/output/result.json`；
+中途被截断时，`/app/output/` 里必须已经有一份能过契约校验的部分结果。
+
+## 4. 证据与诚实性规则（所有产出通用）
+
+- 每条结论、每个字段都挂定位符：PDF 用 `p<页>b<块>`（由 `pdf_text.py` 生成），文本用段落/行号，代码用 `文件:行号`。
+- 定位符只能来自**真的读过**的文件。没有读到的内容不许写：未报告写 `not_reported`，无法判断写 `unable`，
+  材料冲突写 `conflict` 并给出两处原文。
+- **缺失不是 0，不是默认值，不是常识补齐。** 单位缺失就不要补单位，n 没写就不要写 n。
+- 字面命中不等于语义正确：引用到一句话之前，先确认这句话真的在陈述你要的结论（主谓宾、否定词、条件从句都要看）。
+- 只读片段不够时读整段、整节、前后页；跨页续表先合并再取值。
+- 先落一份**诚实的部分结果**（哪怕只有几项），再增量改进；不要把「能读通」当成「已核对」。
+
+
+## 5. 异常与降级
+
+| 情况 | 处置 |
+|---|---|
+| 扫描件/无文字层 | 记录 `no_text_layer`，报告可读页与不可读页；不要用模型记忆补正文 |
+| 加密/权限受限 | 记录 `encrypted`，尝试 `qpdf --decrypt` 后再解析，仍失败如实报 `unable` |
+| 图片型表格 | `pdf_text.py tables` 返回空后标注 `image_table`，不要手造行 |
+| 乱码字体/私有编码 | 标注 `garbled_font`，给页码与原始字节片段，不猜字 |
+| 页眉页脚混进正文 | 由工具标为 `furniture` 并排除，抽查 3 页确认 |
+| 缺 office/matplotlib 等依赖 | 用本 Skill 的无依赖回退路径（`ooxml.py`、`figure.py` 的 SVG 兜底、`preview.py`），并在 `exceptions` 写明用的是哪条路径 |
+| 材料与标签不符 | 以文件内容为准，在 `limitations` 写明标签与内容的差异 |
+| **原稿根本不存在**（只有元数据/工单，无正文字节） | `ingest.py` 返回 `source_unavailable`、`n_blocks=0`；结果里 `manuscript` 置空并标 `not_reported`，用文件锚点（`path#json.key`）支撑能解析的事实，**绝不合成段落、绝不给目标段落编批注** |
+
+
+## 6. 交付前自检（先跑命令，再改内容）
 
 ```bash
-revflow.py --work W status                      # version, operation chain, accepted change ids
-revflow.py --work W accept CH-001               # creates a version, blocks untouched
-revflow.py --work W reject CH-002               # state hash unchanged, receipt says so
-revflow.py --work W compare 1 3                 # writes version_diff.md
-revflow.py --work W rollback 1                  # restores v1 content, hash proves it
-revflow.py --work W reapply 3                   # restores v3 content, hash proves it
-revflow.py --work W fault-inject                # 4 deliberate faults, must all raise
+# 0) 先建段落索引，后面所有定位符都对着它解析
+python3 "$SKILL_DIR"/scripts/ingest.py discover --dir /app/work/input -o /app/work/discover.json
+python3 "$SKILL_DIR"/scripts/ingest.py build --case /input/case.json --dir /app/work/input -o /app/work/blocks.json
+python3 "$SKILL_DIR"/scripts/ingest.py check /app/work/blocks.json
+
+# 1) 结果契约：字段齐不齐、枚举对不对、定位符解析得了吗
+python3 "$SKILL_DIR"/scripts/contract.py check /app/output/result.json \
+  --blocks /app/work/blocks.json --root /app \
+  --contract /app/work/contract.json --normalize
+
+# 2) 数字/单位有没有在改写中丢失或走形
+python3 "$SKILL_DIR"/scripts/text_checks.py numbers <原文> <产出> 2>/dev/null || true
+
+# 3) 引语是否真在材料里（把用到的引语写成 JSON 列表）
+python3 "$SKILL_DIR"/scripts/evidence.py verify <blocks.json> <quotes.json>
+
+# 4) 产物是否真的生成、能不能打开
+ls -la /app/output /app/outputs 2>/dev/null
 ```
 
-## Why the annotations are trustworthy
+- **`--blocks` 不传，定位符就没法解析**，`contract.py` 只能做字段与枚举检查；交付前必须带上它再跑一次。
+- `--root` 指定文件定位符的相对基准（默认取 `result.json` 所在目录），`file#anchor` 与 `file:line` 都靠它落盘。
+- `--contract` 传入案例契约文件时，会额外核对契约里声明的字段是否都在结果里出现。
+- `contract.py check` 的 `problems` 必须清空；`notes` 要逐条回应。
+- **空索引不算失败，但引用空索引里的段落一定失败**：材料没找到时 `blocks` 为 0 条是诚实状态，
+  此时结果只能写 `not_reported` 和文件锚点；一旦引用 `p<页>b<块>` 或贴一段原稿引文，检查器会逐条报错。
+- `text_checks.py`/`evidence.py` 报出的每一条都要么修掉、要么写进 `uncertainties` 并说明原因。
+- 声称存在的文件，`ls` 必须真的看得到。
+- **退出码要单独取**：`python3 ... | head` 这类管道会把 `$?` 换成 `head` 的，看上去成功其实是假象。
+  写成 `cmd > log 2>&1; echo "exit=$?"`。
 
-Each annotation is built from two **verbatim quotations** and one scope statement, and the
-script refuses to emit an annotation it cannot ground:
 
-1. the anchor sentence of the target paragraph (checked to be a substring of that block);
-2. a sentence elsewhere in the material that adds a condition, a comparable statement, or the
-   material's own scope limitation — chosen after rejecting any sentence that merely restates the
-   anchor (journal papers repeat the abstract's claim in Results and Discussion, and a restatement
-   is worthless as evidence);
-3. an explicit statement that a text search found no mention of the missing aspect (replicate
-   counts, error bars, confidence intervals, …) — so the annotation claims ignorance rather than
-   asserting an absence.
+## 7. 依赖与资源
 
-If no sentence in the material adds anything to a target, that target is reported as
-`unresolved` with a reason and **nothing is written**. Status then becomes `partial`, which is the
-honest answer.
+- **必需**：Python 3.9+ 标准库。全部脚本在只有标准库时可运行；本包实测于 Python 3.9.6
+  （脚本用 `from __future__ import annotations`，因此 `str | None` 这类注解在 3.9 不会报错）。
+- **可选（有则更好，无则自动降级并在输出里说明）**：`pymupdf`/`pdfplumber`/`pypdf`（更细的抽取）、
+  `matplotlib`（数据图与保底预览）、`soffice`（office→PDF→PNG 预览）、`rsvg-convert`/`inkscape`（SVG 光栅化）、
+  `pdftoppm`/`mutool`/`gs`（PDF 光栅化）、`tesseract`（OCR）。
+- 安装（评测环境如可联网）：`pip3 install --break-system-packages pymupdf pdfplumber matplotlib`。
+- 脚本之间只通过文件和标准输入输出耦合；**调用时统一写成 `python3 "$SKILL_DIR"/scripts/<name>.py`**，
+  不要依赖当前工作目录。若某个脚本不存在（安装不完整），在 `exceptions` 里写明并用等价的手工步骤替代，
+  不要假装它跑过。
+- 文件数 ≤50、单文件 ≤500KB、总计 ≤2MB、无符号链接——本包已满足。
 
-Annotations are English-first with a Chinese gloss, because the workflow may export through a
-renderer without CJK glyphs; the English body is complete on its own, and the docx carries only
-the English part so no text can silently disappear.
 
-## Failure handling
+## 8. 最小示例（示意，不是正式案例结果）
 
-| situation | behaviour |
-|-|-|
-| no manuscript-like file under `/input` | `status: failed`, the reason and the required input types, nothing invented |
-| target id missing | ordinal fallback, then `unresolved` entry |
-| target paragraph is front matter (affiliation, licence, heading) | annotation carried to the nearest substantive block, remapping stated in the annotation and the change log |
-| no grounding sentence found | `unresolved` with reason, status `partial` |
-| PDF has no text layer | `unresolved` for every target; the run still reports what it could read |
-| LibreOffice absent | built-in text PDF preview, with the substitution named in `result.json` |
-| a control character / private-use glyph in the PDF | mapped at read time so the DOCX stays valid |
+```bash
+mkdir -p /app/work /app/output
+printf 'Section 1\n\nThe treated group reached 42.5 mg/L after 24 h (n = 6).\n' > /app/work/draft.md
+python3 "$SKILL_DIR"/scripts/text_checks.py numbers /app/work/draft.md /app/work/draft.md
+python3 "$SKILL_DIR"/scripts/contract.py stub --family writing -o /app/output/result.json
+python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path("/app/output/result.json"); d = json.loads(p.read_text())
+d["case_id"] = "EXAMPLE-NOT-A-TEST-CASE"
+d["deliverable"] = {"path": "/app/output/draft.md", "format": "markdown"}
+d["preserved_facts"] = [{"fact": "42.5 mg/L", "source": "p1b3", "changed": False},
+                        {"fact": "n = 6", "source": "p1b3", "changed": False}]
+d["evidence_map"] = [{"claim": "treated group reached 42.5 mg/L after 24 h",
+                      "locator": "p1b3", "quote": "reached 42.5 mg/L after 24 h"}]
+d["change_log"] = [{"action": "none", "reason": "example only", "human_check": True}]
+d["status"] = "partial"
+p.write_text(json.dumps(d, ensure_ascii=False, indent=1))
+PY
+python3 "$SKILL_DIR"/scripts/contract.py check /app/output/result.json --normalize
+```
 
-## Limits (stated, not hidden)
+示意输出：`draft.md` 与按 writing 契约填好的 `result.json`。**以上均为示例。**
 
-- No Word tracked-change XML: the organizer states it is neither supplied nor required.
-  Annotations are separate labelled records after their anchor, so original text stays
-  byte-identical and remains editable.
-- Conflict adjudication is left to the author: the report records locators, it never silently
-  corrects a published unit or number.
-- Version history covers this workflow's own operations (`v1..vN`); it does not model the
-  author's external revision history.
+
+## 9. 本包内的脚本
+
+| 脚本 | 用途 | 关键子命令 |
+|---|---|---|
+| `ingest.py` | 把原稿切成带稳定 id 的段落索引；找不到/解析不了原稿时如实返回 `source_unavailable`，**不合成正文** | `discover` `build` `show` `check` |
+| `revise.py` | 离线修订工作区：提案、逐条采纳/拒绝、应用、回滚、重放、导出 | `init` `propose` `decide` `apply` `rollback` `reapply` `diff` `status` `verify-state` `export` |
+| `contract.py` | 输出契约机检（字段/枚举/定位符/引语） | `check` `stub` `merge` |
+| `evidence.py` | 定位与引语核验 | `verify` |
+| `text_checks.py` | 数字·术语·引用机械检查 | `numbers` 等 |
+| `pdf_text.py` | PDF 文字层抽取与表格探测，产出 `p<页>b<块>` | `text` `tables` |
+| `ooxml.py` | 无依赖 docx 导出 | — |
+| `render.py` / `preview.py` | 渲染能力探测与预览（PNG） | `probe` / `doc` |
+| `gain_report.py` | 增益量化 | `report` `compare` |
+| `summary_card.py` | 结果可视化摘要 | — |
+
+`revise.py` 的几个要点：
+
+- `init --blocks <blocks.json> --workdir <dir>`：建 v1 版本并写 `receipts.jsonl` 的 import 回执。
+  **索引为空时 exit 1**，工作区照样建出来，但 `original` 为空——这是诚实状态，不要往里填段落。
+- `propose --workdir --target --kind --quote --annotation [--why] [--uncertain]`：`--quote` 必须能在
+  目标段落里逐字命中，否则 `quote_not_in_source`、exit 2。没有原文时返回 `no_source`、exit 2。
+- `decide --workdir --id --accept|--reject --by [--note]`：逐条决策，不批量默认通过。
+- `apply --workdir [--ids]` / `rollback --to <version>` / `reapply`：应用与回退，状态可校验（`verify-state`）。
+- `export --workdir --outdir`：只写 `manuscript_current.md` + `doc_spec.json`，**不出图**；
+  PNG 由 `preview.py doc <doc_spec.json> -o <outdir>` 另跑一步（无 soffice 时走 matplotlib 回退）。
+- 非法操作一律输出 `{"error": ..., "detail": ..., "state_unchanged": true}` 并 exit 2——这是设计行为，
+  不要绕过它手工改 `state.json` 来「修好」。
+
+
+## 10.5 用可测量的方式说明增益（不要只写「本 Skill 更好」）
+
+评分里有一项是「增益可验证性」。它要求对照，不要求形容词。本包提供 `gain_report.py`，
+它把「加载本 Skill 之后到底变了什么」变成磁盘上的数字：
+
+```bash
+# 无 Skill 的产出（基线）与本 Skill 的产出，各跑一次
+python3 "$SKILL_DIR"/scripts/gain_report.py report --result /app/work/baseline/result.json \
+  --blocks /app/work/blocks.json --material /app/work/material.txt -o /app/work/gain_baseline.json
+python3 "$SKILL_DIR"/scripts/gain_report.py report --result /app/output/result.json \
+  --blocks /app/work/blocks.json --material /app/work/material.txt -o /app/work/gain_skill.json
+python3 "$SKILL_DIR"/scripts/gain_report.py compare /app/work/gain_baseline.json /app/work/gain_skill.json \
+  -o /app/output/gain.json
+```
+
+它量化五件事，全部来自文件而不是自述：
+
+| 指标 | 含义 | 期望方向 |
+|---|---|---|
+| `contract_problems` | 结果契约缺项数 | → 0 |
+| `locator_coverage` | 带真实定位符的字段/论断占比 | 越高越好 |
+| `evidence_exactness` | 引语能在材料里逐字命中的比例 | 越高越好 |
+| `honesty_labelling` | 未报告/无法判断被如实标注的比例 | 越高越好 |
+| `fabrication_risk` | 产出中在材料里找不到的数字占比 | 越低越好 |
+
+跑不出基线（案例只允许一种条件）时，就**只报本 Skill 的绝对指标**，并在 `limitations` 说明
+对照条件不满足——不要编造一个基线数字。
+
+
+## 11. 本题自查清单
+
+- [ ] 编号连续且交叉引用可解析
+- [ ] 图表/公式登记表与正文一致
+- [ ] 术语全文一致
+- [ ] 摘要与结论呼应
+- [ ] 引用双向一致
+- [ ] 长文分章完成无缺章
