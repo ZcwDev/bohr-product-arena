@@ -763,12 +763,47 @@ def search_blocks(query: str, blocks: list[TextBlock], index: dict,
 
 # ── Stage 4: Parse Task ──────────────────────────────────────────────
 
+def collect_instruction(case: dict, inp: Path) -> str:
+    """把"要回答什么"从案例里取全：键名不止 task_instruction 一种，还会落在题面文件里。
+
+    只认 `case.json.task_instruction` 时，平台若把问题放在 `questions`/`task`/`task.md`，
+    引擎就会解析出 0 个问题、交出一份空读稿（实测 dev 夹具上 `total_questions: 0`）。
+    """
+    parts: list[str] = []
+    for key in ("task_instruction", "task", "instruction", "instructions", "questions", "question_set"):
+        value = case.get(key) if isinstance(case, dict) else None
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
+        elif isinstance(value, list):
+            for i, item in enumerate(value, 1):
+                if isinstance(item, str) and item.strip():
+                    parts.append(f"{i}. {item.strip()}")
+                elif isinstance(item, dict):
+                    text = item.get("text") or item.get("question") or item.get("prompt")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(f"{i}. {text.strip()}")
+    for name in ("task.md", "instruction.md", "README.md", "task.txt"):
+        path = inp / name
+        if path.is_file():
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            if text.strip():
+                parts.append(text)
+                break
+    return "\n".join(parts)
+
+
 def parse_questions(task_instruction: str) -> list[dict]:
     """Parse task_instruction into individual questions."""
     if not task_instruction:
         return []
 
     questions = []
+    # 标题行不是问题（"# 阅读任务" 曾被当成 Q01），先剔除 markdown 标题与纯装饰行
+    task_instruction = "\n".join(ln for ln in task_instruction.split("\n")
+                                 if not ln.lstrip().startswith("#") and ln.strip() not in {"---", "***"})
     # Try numbered questions first
     lines = task_instruction.strip().split("\n")
     current_q = ""
@@ -1481,7 +1516,7 @@ def run_case(input_dir: Path, output_dir: Path) -> dict:
     stage_time("index")
 
     # ── Stage 4: Parse task ──
-    task_instruction = case.get("task_instruction", "")
+    task_instruction = collect_instruction(case, input_dir)
     questions = parse_questions(task_instruction)
     log("parse_task", f"Parsed {len(questions)} questions from task_instruction", t0)
     for q in questions:
