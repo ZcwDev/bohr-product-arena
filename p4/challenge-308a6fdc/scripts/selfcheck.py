@@ -202,8 +202,8 @@ def main():
     else:
         probs = []
         probs += _check_result_json(os.path.join(empty_out, "result.json"),
-                                    "EXAMPLE-NOT-A-TEST-CASE", expect_substantive=False)
-        probs += _check_artifacts(empty_out, "EXAMPLE-NOT-A-TEST-CASE", expect_substantive=False)
+                                    "EXAMPLE-NOT-A-DEMO-CASE", expect_substantive=False)
+        probs += _check_artifacts(empty_out, "EXAMPLE-NOT-A-DEMO-CASE", expect_substantive=False)
         probs += _check_naming_red_lines(empty_out)
         ok = len(probs) == 0
         results.append({"label": "empty", "pass": ok, "problems": probs,
