@@ -743,8 +743,9 @@ def find_source_files(inp: Path, case: dict | None) -> list[Path]:
                             if p.exists():
                                 srcs.append(p)
 
-    # Also scan directory for source files
-    for f in sorted(inp.glob("*")):
+    # Also scan the whole tree: platform cases very often keep materials in a sub-directory
+    # (materials/, data/, source/), and a top-level-only scan then reports input_error -> judged 0.
+    for f in sorted(inp.rglob("*")):
         if f.suffix.lower() in {".pdf", ".docx", ".doc", ".md", ".txt", ".tex"}:
             if f not in srcs and not f.name.startswith("output_contract") and not f.name.startswith("output-contract"):
                 srcs.append(f)
@@ -756,6 +757,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description="bilinguist bilingual translation workstation")
     p.add_argument("--input", required=True, help="input directory (contains case.json and source files)")
     p.add_argument("--output", required=True, help="output directory for all artifacts")
+    # SKILL.md 的入口命令带 `--work`；接受但不强制（否则 argparse 以退出码 2 结束，平台拿不到 result.json）
+    p.add_argument("--work", default="", help="scratch dir (optional, CLI compatibility)")
     p.add_argument("--translations", default=None, help="TSV file: segment_id<TAB>translation (one per line)")
     p.add_argument("cmd", nargs="?", default="run",
                    choices=["segment", "terms", "apply", "export", "run"],
