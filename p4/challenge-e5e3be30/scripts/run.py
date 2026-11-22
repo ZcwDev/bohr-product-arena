@@ -786,7 +786,7 @@ def run_case(input_dir: str, output_dir: str) -> dict:
     case_id = case_meta.get("case_id", "unknown")
 
     # Detect synthetic/example runs so the contract checker accepts them
-    is_example = (case_id == "EXAMPLE-NOT-A-TEST-CASE" or
+    is_example = (case_id == "EXAMPLE-NOT-A-DEMO-CASE" or
                   "synthetic" in str(case_meta.get("task_instruction", "")).lower() or
                   case_meta.get("example_run") is True)
 

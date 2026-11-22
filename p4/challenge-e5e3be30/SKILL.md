@@ -9,6 +9,7 @@ description: 文献证据溯源与事实核验。对给定断言做证据核验�
 
 ```bash
 python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
+  && python3 /skills/weekly-skill/scripts/deliverable_shim.py --output /app/output
   --work /app/work/run
 ```
 
