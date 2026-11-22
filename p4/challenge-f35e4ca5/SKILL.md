@@ -9,6 +9,7 @@ description: 当任务要求把科研图表当作带结构的数据源来解析�
 
 ```bash
 python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
+  && python3 /skills/weekly-skill/scripts/deliverable_shim.py --output /app/output
   --work /app/work/run
 ```
 
