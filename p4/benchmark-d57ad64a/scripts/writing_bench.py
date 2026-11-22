@@ -735,6 +735,19 @@ def _build_report(rows: list[dict], agreement: dict,
         for c in r.get("criteria", []):
             lines.append(
                 f"- {c['criterion']}: {c['score']}×w{c['weight']} — {c['why']}")
+        if r.get("reference_answer"):
+            # 题面要求"事实与来源映射：可逐条回溯"——每条参考答复都要带材料定位
+            lines.append(f"- **参考答复（材料原文）**: {str(r['reference_answer'])[:300]}")
+            lines.append(f"- **定位**: `{r.get('reference_locator') or 'not_reported'}`")
+        lines.append("")
+
+    mapped = [r for r in rows if r.get("reference_answer")]
+    if mapped:
+        lines += ["## 事实与来源映射", "",
+                  "| item | 参考答复（节选） | 定位 |", "|---|---|---|"]
+        for r in mapped:
+            answer = str(r["reference_answer"]).replace("|", "\|")[:120]
+            lines.append(f"| {r['item_id']} | {answer} | `{r.get('reference_locator') or 'not_reported'}` |")
         lines.append("")
 
     if agreement:
