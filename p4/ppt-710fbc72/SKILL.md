@@ -9,7 +9,8 @@ description: 学术：三段式——脚本先把材料抽成"可引用要点 + 
 
 ```bash
 python3 /skills/weekly-skill/scripts/deck_from_paper.py --input /input --output /app/output --title "汇报标题" \
-  && python3 /skills/weekly-skill/scripts/attach_meta.py --input /input --output /app/output
+  && python3 /skills/weekly-skill/scripts/attach_meta.py --input /input --output /app/output \
+  && python3 /skills/weekly-skill/scripts/deliverable_shim.py --output /app/output
 ```
 
 - 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件即完成（不要叫 results.json）。
