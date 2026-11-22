@@ -1,0 +1,45 @@
+{
+ "case_id": "EXAMPLE-NOT-A-TEST-CASE",
+ "example_run": true,
+ "status": "partial",
+ "deliverable": {
+  "path": "/app/output/draft.md",
+  "format": "markdown",
+  "structure": "Section 1 正文一段；无图表"
+ },
+ "preserved_facts": [
+  {
+   "fact": "42.5 mg/L",
+   "source": "p1b3",
+   "changed": false
+  },
+  {
+   "fact": "24 h",
+   "source": "p1b3",
+   "changed": false
+  },
+  {
+   "fact": "n = 6",
+   "source": "p1b3",
+   "changed": false
+  }
+ ],
+ "evidence_map": [
+  {
+   "claim": "The treated group reached 42.5 mg/L after 24 h (n = 6).",
+   "locator": "p1b3",
+   "quote": "reached 42.5 mg/L after 24 h"
+  }
+ ],
+ "change_log": [
+  {
+   "action": "none",
+   "reason": "合成示例：只演示接口形状，未改写材料内容",
+   "human_check": true
+  }
+ ],
+ "limitations": [
+  "示例文件，不含正式案例结果；所有 locator 指向 skill/example/example_blocks.json 的合成块",
+  "未做渲染预览，未验证交付件在 Word/PDF 中的版式"
+ ]
+}

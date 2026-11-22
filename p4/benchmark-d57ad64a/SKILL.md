@@ -27,6 +27,12 @@ python3 /skills/weekly-skill/scripts/writing_bench.py --input /input --output /a
 解决的是"题能不能判、答案站不站得住、锚点齐不齐、跑得可复现、报告说得清"这五件事，
 产物是**可以反复跑的评测工具**，不是一次性的分数。
 
+```bash
+python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
+  --work /app/work/run
+```
+
+
 ## 第 0 步（Agent 必做，先于脚本）
 
 隐藏案例给的是 `/input/case.json` + `task.md` + 科研材料，**不一定有现成题集**：
@@ -56,6 +62,90 @@ python3 "$SKILL_DIR/scripts/writing_bench.py" --input /input --output /app/outpu
 输出：`result.json`（逐题 + 聚合 + 失败分类 + `rater_agreement` + `run_record`）、`per_item.tsv`、
 `report.md`（逐题得分/证据/失败类型/改进建议）、`SELFCHECK.json`。
 
+## Runbook（执行手册）
+
+### 1. 准备输入目录
+
+确保 `/input` 包含：
+- `case.json`（必选）：`case_id` + `output_contract` 字段定义
+- 材料文件（按文件名族自动匹配）：`items.json`, `answers.json`, `references.json`, `raters.json`
+
+### 2. 执行脚本
+
+```bash
+python3 /skills/weekly-skill/scripts/writing_bench.py --input /input --output /app/output
+```
+
+脚本会：
+1. 读取 `case.json`，验证 `case_id` 存在
+2. 按文件名族发现输入文件（items/answers/references/raters）
+3. 若无题集，从材料派生（最多 8 题，每题含事实/数值句段）
+4. 逐题评分：结构检查 + accept/reject 匹配 + 加权求和
+5. 计算聚合指标、失败分类、标注一致性（≥2 评分员时算 Cohen's kappa）
+6. 生成改进建议（低 kappa 锚点需改）
+7. 写入 `result.json`, `per_item.tsv`, `report.md`, `SELFCHECK.json`
+
+### 3. 验证输出
+
+检查 `/app/output` 目录应包含：
+- `result.json`（主交付物，字段见下方"输出契约"）
+- `per_item.tsv`（逐题明细表）
+- `report.md`（可读报告）
+- `SELFCHECK.json`（自校验标志）
+
+### 4. 清理
+
+删除任何测试/示例目录（`selftest/`, `edge-test/`, `portability/` 等），只留正式案例输出。
+
+### 失败处理
+
+| 退出码 | 含义 | 排查 |
+|---|---|---|
+| 0 | 成功 | 检查 `result.json` 字段完整性 |
+| 1 | 输入错误 | `/input/case.json` 缺失或格式错误 |
+| 2 | 脚本异常 | 查看 stderr，检查 Python 版本 ≥3.8 |
+| 其他 | 系统错误 | 检查磁盘空间、文件权限 |
+
+常见错误：
+- `case_id not found in case.json` → 检查 `case.json` 是否包含 `case_id` 字段
+- `No items found` → 检查输入目录是否有 `*items*.json` 或材料文件
+- `Permission denied` → 检查 `/app/output` 目录可写
+
+## 输出契约
+
+`result.json` 顶层字段（**必须**）：
+
+```json
+{
+  "case_id": "从 /input/case.json 逐字复制",
+  "deliverable": {
+    "benchmark_items": [...],
+    "aggregates": {...},
+    "failure_taxonomy": {...},
+    "rater_agreement": {...},
+    "improvement_suggestions": [...]
+  },
+  "preserved_facts": [...],
+  "evidence_map": {...},
+  "change_log": [...],
+  "status": "answered | reference_only | input_error",
+  "sources": [...],
+  "uncertainties": [...],
+  "limitations": [...],
+  "run_record": {...}
+}
+```
+
+- `case_id`：与 `/input/case.json` 逐字一致，**绝不自行编号**
+- `deliverable.benchmark_items[]`：每题含 `item_id`, `prompt`, `verdict`, `score`, `max_score`, `failure`, `criteria[]`
+- `deliverable.aggregates`：`n_items`, `total_score`, `max_total`, `mean_score`, `pass_rate`
+- `deliverable.failure_taxonomy`：失败类型 → 题目列表（`wrong_fact`, `wrong_format`, `style_or_variant`, `missing_output`, `empty_output`）
+- `deliverable.rater_agreement`：每判据的 `n`, `percent_agreement`, `cohen_kappa`（<2 评分员时为 `{}`）
+- `preserved_facts[]`：每题的事实/数值（`value`, `context`, `source`, `item_id`）
+- `evidence_map`：题目 → 证据来源（reference/candidate）
+- `change_log[]`：版本历史与决策记录
+- `run_record`：时间戳、`case_id`、输入文件 sha256、脚本名、Python 版本
+
 ## 判定规则
 
 - **加权求和**：每题的分数 = Σ(锚点满足度 × 权重)，权重来自题集，不写死。
@@ -79,9 +169,17 @@ python3 "$SKILL_DIR/scripts/writing_bench.py" --input /input --output /app/outpu
 
 ## 最小调用示例（示例，不是正式案例结果）
 
-`example/`：2 题 + 2 候选 + 2 参考 + 2 名评分员（`EXAMPLE-CASE-001`）
+输入目录包含：
+- `case.json`: `{"case_id": "EXAMPLE-001", ...}`
+- `items.json`: 2 题，每题含 `item_id`, `criteria`, `required_sections`
+- `answers.json`: 2 个候选答案
+- `references.json`: 2 个参考（含 `accept`/`reject` 变体）
+- `raters.json`: 2 名评分员的逐题评分
+
 ```bash
-python3 scripts/writing_bench.py --input example --output example-output
-# W1 partial 2.0/5.0（缺 Limitations）；W2 partial 2.0/3.0（含 reject 片段 "abolished in humans"）
-# 一致性：completeness 100%/κ=1.0，accuracy 50%/κ=0.0（⇒ 该锚点需改），structure n=1 不计算
+python3 /app/submission/scripts/writing_bench.py --input /input --output /app/output
+# 输出 result.json:
+# - W1: partial 2.0/5.0（缺 Limitations 节）
+# - W2: partial 2.0/3.0（含 reject 片段 "abolished in humans"）
+# - rater_agreement: completeness κ=1.0, accuracy κ=0.0（⇒ 该锚点需改）
 ```
