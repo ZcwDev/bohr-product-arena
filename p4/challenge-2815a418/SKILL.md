@@ -16,7 +16,7 @@ python3 /skills/weekly-skill/scripts/reviewreply.py --input /input --output /app
 - 收工前清理输出目录：**只允许 `result.json` 与 skill 产出的交付物**；任何 `edge-test*`、`portability*`、`example-run`、`selftest*` 目录都要删掉——评测方会把这些当成自造案例，直接判 0。
 - `result.json.case_id` 必须与 `/input/case.json` 里的 `case_id` **逐字一致**，不得自行编号（T01/demo 之类一律判 0）。
 - 如果 `/input` 的材料读不出来，就**如实报 `status: input_error`**；**绝对不要自造案例、不要用 /tmp 下的测试材料充数**。
-- **`case_id` 只能从 `/input/case.json` 逐字复制**；自己编号（T01 / TEST-SYNTH-001 / demo / caseA）一律判 0。
+- **`case_id` 只能从 `/input/case.json` 逐字复制**；自己编号（T01 / TEST-DEMO-001 / demo / caseA）一律判 0。
 - 只在这个命令**报错**时，才按下面的“失败处理”表逐条排查。
 - 每个案例都是同一行命令；多个案例就重复执行（输出目录按案例分开）。
 
