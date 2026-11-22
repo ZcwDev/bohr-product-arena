@@ -7,6 +7,9 @@ description: 当任务属于「写作05｜文献证据驱动写作」这一类�
 
 单命令 skill。评测里请**直接执行下面这一行**，不要读脚本、不要重实现、不要先做仓库审计：
 
+> **交付状态红线**：顶层 `status` 只用「成功 / 部分完成」；`无法判断`/`unable`/`insufficient_evidence`
+> 仅在**完全没有可读输入**时才用（会被判 0）。只要读到材料，就必须交一份带缺口说明的「部分完成」。
+
 ```bash
 python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
   --work /app/work/run
