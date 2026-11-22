@@ -1,0 +1,15 @@
+{
+ "case_id": "EXAMPLE-NOT-A-TEST-CASE",
+ "task_instruction": "Synthetic interface example only; the evaluation supplies the real cases.",
+ "output_contract": {
+  "case_id": "原样保留",
+  "deliverable": "可编辑的目标文稿/结构化产物",
+  "preserved_facts": "数字、条件、术语和来源不可凭空改变",
+  "evidence_map": "关键论断到来源定位的映射",
+  "change_log": "修改动作、原因、人工确认项和未解决问题"
+ },
+ "source": {
+  "title": "Synthetic example",
+  "doi": null
+ }
+}

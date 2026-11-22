@@ -1,0 +1,32 @@
+{
+ "case_id": "EXAMPLE-NOT-A-TEST-CASE",
+ "status": "partial",
+ "deliverable": {
+  "path": "/app/output/draft.md",
+  "format": "markdown"
+ },
+ "preserved_facts": [
+  {
+   "fact": "示例：42.5 mg/L",
+   "source": "p1b3",
+   "changed": false
+  }
+ ],
+ "evidence_map": [
+  {
+   "claim": "示例论断",
+   "locator": "p1b3",
+   "quote": "示例引语"
+  }
+ ],
+ "change_log": [
+  {
+   "action": "example",
+   "reason": "示例文件",
+   "human_check": true
+  }
+ ],
+ "limitations": [
+  "示例文件，不含正式案例结果"
+ ]
+}
