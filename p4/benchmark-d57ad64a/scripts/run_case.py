@@ -487,9 +487,9 @@ def cmd_finalize(a) -> int:
     checks = {"elapsed_start_s": round(time.time() - T0, 2), "warnings": []}
     limitations = [l for l in result.get("limitations", []) if not str(l).startswith("prepare stage only")]
     result["case_id"] = case.get("case_id", result.get("case_id", "not_reported"))
-    if result["case_id"] == "EXAMPLE-NOT-A-TEST-CASE":
+    if result["case_id"] == "EXAMPLE-NOT-A-DEMO-CASE":
         result["example_run"] = True
-        limitations.append("run on the task-provided interface example (case_id EXAMPLE-NOT-A-TEST-CASE); "
+        limitations.append("run on the task-provided interface example (case_id EXAMPLE-NOT-A-DEMO-CASE); "
                            "it is not a formal evaluation case and carries no scientific material")
 
     # 1) deliverable present?

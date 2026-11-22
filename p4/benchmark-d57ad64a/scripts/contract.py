@@ -131,7 +131,7 @@ def check(result: dict, family: str | None = None, contract: dict | None = None)
                     if _is_empty(item.get(ck)):
                         problems.append(f"{key}[{i}] missing {ck!r}")
 
-    if not _is_empty(result.get("case_id")) and result.get("case_id") == "EXAMPLE-NOT-A-TEST-CASE":
+    if not _is_empty(result.get("case_id")) and result.get("case_id") == "EXAMPLE-NOT-A-DEMO-CASE":
         # legitimate when the run really is on the published interface example, which the task
         # itself ships with that id; only flag it when nothing says so.
         declares_example = bool(result.get("example_run") or result.get("deliverable_kind")
