@@ -134,6 +134,23 @@ QUESTION = re.compile(r"\b(aim|objective|goal|we (?:investigate|examine|ask)|res
 GAP = re.compile(r"\b(unknown|unclear|not (?:yet|been) (?:studied|addressed)|remains? to be)\b", re.I)
 
 
+def short_label(text: str, limit: int = 36) -> str:
+    """思维导图节点要短：整句/整段做标签会画成一块"文字墙"，读者抓不到要点。
+
+    规则：取第一个分句（。；，、:：），超过 limit 再按词边界截断；完整原文仍在 `quote` 里，回溯不受影响。
+    """
+    t = norm(text)
+    if not t:
+        return ""
+    head = re.split(r"[。；;:：]|(?<=[，,])", t, maxsplit=1)[0].strip(" ，,、")
+    if not head:
+        head = t
+    if len(head) <= limit:
+        return head
+    cut = head[:limit].rsplit(" ", 1)[0].rstrip(" ,;:(-，、")
+    return (cut or head[:limit]) + "…"
+
+
 def clip(text: str, limit: int = 104) -> str:
     """Cut a label at a word boundary: a label ending in "Nylon, a" reads as broken text."""
     t = norm(text)
@@ -335,7 +352,8 @@ def build_graph(blocks: list[dict], units: list[dict], case_id: str, max_nodes: 
     def add(label: str, kind: str, locator: str, quote: str, parent: str | None,
             evidence_type: str = "fact") -> str:
         nid = f"N{len(nodes) + 1:03d}"
-        nodes.append({"id": nid, "parent": parent, "label": clip(label), "kind": kind,
+        shown = label if kind == "title" else short_label(label)
+        nodes.append({"id": nid, "parent": parent, "label": clip(shown, 60), "kind": kind,
                       "locator": locator, "quote": norm(quote)[:400],
                       "evidence_type": evidence_type, "quote_sha256": sha(norm(quote))[:16]})
         if parent:
@@ -343,7 +361,9 @@ def build_graph(blocks: list[dict], units: list[dict], case_id: str, max_nodes: 
                           "basis": f"hierarchy under {parent}"})
         return nid
 
-    title = blocks[0]["text"][:100] if blocks else case_id
+    # 根节点用"标题"而不是第一段正文（正文首段通常很长，画出来就是一行字墙）
+    first_heading = next((b for b in blocks if is_heading(b)), None)
+    title = short_label((first_heading or blocks[0])["text"], 60) if blocks else case_id
     root = add(title, "title", blocks[0]["locator"] if blocks else "-", title, None)
 
     # level 1: sections (headings), with content blocks assigned to the most recent heading
@@ -359,7 +379,10 @@ def build_graph(blocks: list[dict], units: list[dict], case_id: str, max_nodes: 
         elif current is not None:
             current[1].append(b)
     if not sections:  # no detectable headings: one synthetic section covering the material
-        sections = [({"text": "body", "locator": blocks[0]["locator"] if blocks else "-"}, blocks)]
+        # 没有可识别标题时，用材料语言给个中性节名（"body" 是英文占位，出现在中文图里很突兀）
+        has_cjk = any(re.search(r"[\u4e00-\u9fff]", b["text"] or "") for b in blocks)
+        sections = [({"text": "正文" if has_cjk else "body",
+                      "locator": blocks[0]["locator"] if blocks else "-"}, blocks)]
     for head, body in sections:
         label = norm(head["text"])[:70]
         if not label:

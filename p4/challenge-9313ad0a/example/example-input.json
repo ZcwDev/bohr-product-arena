@@ -1,5 +1,5 @@
 {
-  "case_id": "EXAMPLE-NOT-A-TEST-CASE",
+  "case_id": "EXAMPLE-NOT-A-DEMO-CASE",
   "task_instruction": "Synthetic interface example only; actual task inputs are supplied at evaluation.",
   "output_contract": {
     "case_id": "原样保留",
