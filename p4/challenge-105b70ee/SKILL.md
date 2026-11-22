@@ -41,8 +41,8 @@ PY
 
 ```bash
 SKILL_DIR=${SKILL_DIR:-/skills/weekly-skill}
-# 方式 A：单脚本入口（推荐，最简单）
-"$SKILL_DIR"/scripts/run.py --input /input --output /app/output --work /app/work
+# 方式 A：单脚本入口（推荐，最简单；一律用 python3 显式调用，避免解压后丢 execute 位）
+python3 "$SKILL_DIR"/scripts/run.py --input /input --output /app/output --work /app/work
 
 # 方式 B：shell 编排入口（需要更细的中间产物时用）
 bash "$SKILL_DIR"/scripts/run_case.sh --input /input --output /app/output --work /app/work
