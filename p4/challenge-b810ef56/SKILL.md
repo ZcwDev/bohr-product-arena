@@ -174,7 +174,7 @@ python3 "$SKILL_DIR"/scripts/contract.py stub --family writing -o /app/output/re
 python3 - <<'PY'
 import json, pathlib
 p = pathlib.Path("/app/output/result.json"); d = json.loads(p.read_text())
-d["case_id"] = "EXAMPLE-NOT-A-TEST-CASE"
+d["case_id"] = "EXAMPLE-NOT-A-DEMO-CASE"
 d["deliverable"] = {"path": "/app/output/draft.md", "format": "markdown"}
 d["preserved_facts"] = [{"fact": "42.5 mg/L", "source": "p1b3", "changed": False},
                         {"fact": "n = 6", "source": "p1b3", "changed": False}]
