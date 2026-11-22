@@ -762,6 +762,33 @@ def mechanical_proposals(state: dict, blocks: list[dict], corpus: list[dict], li
             })
         if len(out) >= limit:
             break
+    # 引用一致性：正文里出现 [n] 但参考文献表里没有第 n 条 —— 这是"引用协作"里最典型的可核验问题，
+    # 以**编辑注**形式落到对应段落（不改写正文），评审可逐条接受/拒绝。
+    ref_numbers = sorted({m.group(1) for c in corpus
+                          if (mm := re.match(r"^\s*(\d{1,3})\.", str(c.get("text") or "")))
+                          for m in [mm]})
+    if ref_numbers:
+        have = set(ref_numbers)
+        for blk in blocks:
+            text = str(blk.get("text") or "")
+            used = {n for m in CITE.finditer(text) for n in re.findall(r"\d+", m.group(1))}
+            missing = sorted(n for n in used if n not in have)
+            if not missing:
+                continue
+            out.append({
+                "change_id": f"CH-C{len(out) + 1:02d}",
+                "target": blk["pid"],
+                "operation": "insert_after",
+                "anchor_quote": text[:200],
+                "insertion": f"〔编辑注·引用核对：正文引用 [{', '.join(missing)}] 在参考文献表中未见对应条目，"
+                             f"需作者补录或删除该引用〕",
+                "evidence": {"file": "", "locator": blk.get("locator", ""), "quote": norm(text)[:200],
+                             "grounding": "参考文献表逐条比对（编号存在性）"},
+                "rationale": f"引用 [{', '.join(missing)}] 无对应文献条目（可核验，不改写正文）",
+                "status": "proposed",
+            })
+            if len(out) >= limit:
+                break
     return out
 
 
