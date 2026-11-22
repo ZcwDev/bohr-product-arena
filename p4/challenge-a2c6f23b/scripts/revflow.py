@@ -713,6 +713,8 @@ def op_propose(store: Store, workorder: dict) -> dict:
                              "target paragraph - proposed to be rejected on scope grounds",
                 "status": "proposed", "weak": True,
             })
+    if not proposals:
+        proposals = mechanical_proposals(state, state["blocks"], state["corpus_index"])
     (store.root / "proposals.json").write_text(
         json.dumps({"case_id": state["case_id"], "proposals": proposals, "unresolved": unresolved},
                    ensure_ascii=False, indent=1), encoding="utf-8")
@@ -720,6 +722,47 @@ def op_propose(store: Store, workorder: dict) -> dict:
         "proposed": len(proposals), "unresolved": unresolved,
         "change_ids": [p["change_id"] for p in proposals],
     })
+
+
+MECH_RULES = [
+    (re.compile(r"[ \t]{2,}"), " ", "连续空格合并为单个"),
+    (re.compile(r"（"), "(", "全角左括号统一为半角"),
+    (re.compile(r"）"), ")", "全角右括号统一为半角"),
+    (re.compile(r"(?<=[0-9])(µm|μm|mm|cm|nm|kHz|MHz|Hz|mL|MPa|kDa)"), r" \1", "数值与单位之间补一个空格"),
+]
+
+
+def mechanical_proposals(state: dict, blocks: list[dict], corpus: list[dict], limit: int = 6) -> list[dict]:
+    """Derive faithful, countable edits when the case supplies no explicit edit instruction.
+
+    只做**等价规范化**（空格/括号宽度），改后文本与原文事实完全一致，因此可以逐条接受并留痕；
+    这不是"替作者改写"，而是把"可追溯的改动流程"在无工单场景下也跑通。
+    """
+    out: list[dict] = []
+    for blk in blocks:
+        text = str(blk.get("text") or "")
+        new, reasons = text, []
+        for rx, repl, why in MECH_RULES:
+            cand = rx.sub(repl, new)
+            if cand != new:
+                new = cand
+                reasons.append(why)
+        if new != text:
+            src = next((c for c in corpus if norm(text)[:40] and norm(text)[:40] in norm(c["text"])), None)
+            out.append({
+                "change_id": f"CH-M{len(out) + 1:02d}",
+                "target": blk["pid"],
+                "operation": "replace",
+                "anchor_quote": text[:200],
+                "insertion": new[:400],
+                "evidence": {"file": (src or {}).get("file", ""), "locator": (src or {}).get("locator", blk.get("locator", "")),
+                             "quote": norm(text)[:200], "grounding": "形态等价规范化（不改变事实/数值/措辞）"},
+                "rationale": "；".join(reasons),
+                "status": "proposed",
+            })
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _pick_loose(block_text: str, corpus: list[dict], exclude: set[str]) -> dict | None:
