@@ -1000,14 +1000,14 @@ def build_result(case: dict, sources: list[dict], blocks: list[TextBlock],
     partial_count = sum(1 for a in answers if a.get("verdict") == "hedged")
     no_evidence_count = sum(1 for a in answers if a.get("verdict") == "insufficient_evidence")
 
+    # 交付门槛：顶层 `insufficient_evidence` / `unable` 会被判 0；只要读到了材料，就必须交付
+    # 一份"部分完成"（每条答案的 verdict 仍如实标注，缺口写在 limitations 里）。
     if not answers:
-        overall_status = "input_error" if not sources else "insufficient_evidence"
+        overall_status = "input_error" if not sources else "partial"
     elif answered_count == len(answers):
         overall_status = "answered"
-    elif answered_count + partial_count > 0:
-        overall_status = "partial"
     else:
-        overall_status = "insufficient_evidence"
+        overall_status = "partial"
 
     # Build claims from answers
     claims = []

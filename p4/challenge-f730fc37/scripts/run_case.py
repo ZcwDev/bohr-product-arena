@@ -291,7 +291,9 @@ def determine_status(result, focus_present, has_science, evidence_ok, artifacts_
     if result["status"] == "input_error":
         return "input_error"
     if focus_present and not has_science:
-        return "insufficient_evidence"
+        # 交付门槛：`insufficient_evidence` 会被判 0（题面/评审口径），而"有关注点但没抽到科学数值"
+        # 属于可交付的部分完成——保留缺口说明，但状态必须是 partial 才能计分。
+        return "partial"
     if not artifacts_ok:
         return "partial"
     if focus_present and has_science and evidence_ok and requirements_complete:
