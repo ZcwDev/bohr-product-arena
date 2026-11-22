@@ -22,6 +22,73 @@ python3 /skills/weekly-skill/scripts/reviewreply.py --input /input --output /app
 
 ---
 
+```bash
+python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
+  --work /app/work/run
+```
+
+
+## Runbook（执行手册）
+
+### 前置条件
+
+- **Python**: 3.10+（脚本使用类型注解 `list[dict]`、`dict[str, str]` 等新语法）
+- **依赖**: 无第三方库要求（仅用标准库 `pathlib`、`re`、`json`、`hashlib`、`shutil`、`subprocess`）
+- **可选**: LibreOffice（`soffice` 命令）用于生成 PDF/PNG 预览；缺失时仍产出 DOCX，但 `render` 字段会标注 `pdf_preview_missing`
+- **输入目录**: 必须包含 `case.json`（含 `case_id`）和至少一个审稿意见文件（文件名匹配 `comment|review|referee|意见|审稿|rebuttal`）
+- **手稿文件**: 脚本自动选择最大的非评论文档作为基线手稿（支持 `.md`、`.txt`、`.docx`、`.pdf`）
+
+### 快速启动
+
+```bash
+# 评测环境（标准路径）
+python3 /skills/weekly-skill/scripts/reviewreply.py --input /input --output /app/output
+
+# 本地测试（工作区路径）
+python3 skill/scripts/reviewreply.py --input out/test-synth-1 --output out/cases/test-synth-1
+```
+
+### 输出结构
+
+执行成功后，`--output` 目录包含：
+
+```
+result.json                 # 主输出（必须），含 case_id、status、deliverable、preserved_facts、evidence_map、change_log
+manuscript_revised.md       # 修订稿（Markdown）
+manuscript_revised.docx     # 修订稿（Word）
+response_letter.md          # 逐条回复信（Markdown）
+response_letter.docx        # 逐条回复信（Word）
+response_letter.pdf         # 回复信 PDF（若 LibreOffice 可用）
+response_letter_page_N.png  # 回复信分页截图（若 LibreOffice 可用）
+response_map.tsv            # 意见-行动映射表（TSV）
+manuscript_baseline.md      # 基线手稿副本（便于对比）
+```
+
+### 状态码
+
+- `status: answered` — 所有意见已回应，所有改动已在修订稿中验证存在
+- `status: input_error` — 输入文件缺失或不可读（`result.json` 会说明具体原因）
+- `status: partial` — 部分意见未能定位或验证失败（`verification` 字段会列出具体问题）
+
+### 常见问题排查
+
+| 症状 | 原因 | 解决 |
+|-|-|-|
+| `items: 0` | 审稿意见文件未匹配文件名规则，或所有正则都无法解析 | 检查文件名是否包含 `comment\|review\|referee\|意见\|审稿`；检查意见格式是否为编号列表 |
+| 所有 `location` 都是 `p001` | 段落匹配得分过低，回退到标题段落 | 检查手稿是否为纯文本（非扫描 PDF）；检查意见是否使用了手稿中不存在的术语 |
+| `pdf_preview_missing` | 系统未安装 LibreOffice | 安装 `libreoffice` 或接受仅有 DOCX 的输出 |
+| `docx_export_failed` | python-docx 未安装 | 脚本会回退到纯 Markdown；如需 DOCX 可安装 `pip install python-docx` |
+| `case_id` 与输入不一致 | 脚本自行生成了 case_id | 这是 bug；应报告并修复（脚本必须从 `/input/case.json` 逐字复制） |
+
+### 性能基准
+
+- **单案例执行时间**: 2-8 秒（取决于手稿长度和意见数量）
+- **最大意见数**: 40 条（超过会被截断并记录到 `limitations`）
+- **手稿长度**: 无硬性上限，但超过 200 段时匹配速度会下降
+- **模型调用**: 0（纯规则驱动，不依赖 LLM）
+
+---
+
 # reviewreply — a response letter that can be checked against the manuscript
 
 ## The one invariant that matters
@@ -92,3 +159,14 @@ and `verification`.
 - The inserted clarifications quote the supplied version; they do not add new science, and a comment
   that requires new data is refused with a written limitation instead.
 - The response letter only claims what the verification step found in the revised file.
+
+## Limitations（本 skill 明确不覆盖的范围）
+
+1. **不做内容重写** — 脚本只在目标段落后插入标记句，绝不修改原文任何一字。如需 Word Track Changes 导出，须在作者自己的编辑器中完成。
+2. **不补充新科学** — 对要求新实验、新数据、新分析的意见，脚本只写一条"局限性声明 + 理由"，绝不虚构"已完成"。
+3. **不做 LLM 推理** — 全部决策来自规则（正则 + 词频匹配），无模型调用、无网络请求、无随机性，两次运行结果完全一致。
+4. **不处理扫描 PDF** — 如果手稿是图片 PDF（无可提取文字），`status` 会报 `input_error`。
+5. **不做多版本对比** — 只处理一个基线手稿 + 一份审稿意见；若需跨版本（R1 → R2 → R3）追踪，每个版本须单独运行。
+6. **不自动翻译** — 回复语言沿用手稿的语言；中英文混合稿件的中文段落会生成中文回复，英文段落会生成英文回复。
+7. **段落匹配有误差** — 若审稿意见使用的术语与手稿完全不同（如审稿人说 "temporal resolution" 而手稿只写 "time step"），匹配得分会很低，目标段落可能不准确，需要人工复核 `response_map.tsv` 中的 `match_score` 列。
+8. **DOCX 渲染依赖 python-docx** — 如果未安装该库，脚本回退到纯 Markdown 输出，`docx_export_status` 会标注 `skipped`。

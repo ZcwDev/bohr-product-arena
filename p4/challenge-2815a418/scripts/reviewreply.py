@@ -112,17 +112,18 @@ SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\[]|[A-Z][a-z])")
 NUM = re.compile(r"(?<![0-9.])(\d+(?:[.,]\d+)?)\s*(%|°C|mm|cm|µm|nm|MPa|kPa|GPa|N|kg|mg|mL|L|h|min|"
                  r"days?|weeks?|years?|samples?|specimens?)(?![A-Za-z])")
 CITE_MARK = re.compile(r"\[(\d+(?:[,\s–-]+\d+)*)\]")
-REF_HEAD = re.compile(r"^\s*(references|bibliography|参考文献)\s*$", re.I)
-COMMENT_HEAD = re.compile(r"^\s*(?:R\d+\s*[-,.]?\s*(?:C|Q)?\s*(\d+)|Comment\s*(\d+)|审稿意见\s*(\d+)|"
+REF_HEAD = re.compile(r"^\s*#*\s*(references|bibliography|参考文献)\s*$", re.I)
+COMMENT_HEAD = re.compile(r"^\s*#*\s*(?:R\d+\s*[-,.]?\s*(?:C|Q)?\s*(\d+)|Comment\s*(\d+)|审稿意见\s*(\d+)|"
                           r"意见\s*(\d+)|(\d+)[.)]\s+)(.*)$", re.I)
-BULLET = re.compile(r"^\s*(?:[-*•]|\(?[a-h][).]|\(?\d+\))\s+(.*)$")
-NEEDS_EXPERIMENT = re.compile(r"\b(additional experiments?|new experiments?|in vivo|in vitro validation|"
-                              r"wet[- ]lab|repeat the experiment|more (?:data|samples)|补充实验|新增实验|"
-                              r"动物实验|细胞实验|重复实验|补充样本)\b", re.I)
-NEEDS_CITATION = re.compile(r"\b(cite|citation|reference|literature|prior work|related work|"
-                            r"引用|文献|相关工作)\b", re.I)
-NEEDS_LIMITATION = re.compile(r"\b(limitation|caveat|overstate|generaliz|scope|"
-                              r"局限|过度|范围|推广)\b", re.I)
+BULLET = re.compile(r"^\s*#*\s*(?:[-*•]|\(?[a-h][).]|\(?\d+\))\s+(.*)$")
+NEEDS_EXPERIMENT = re.compile(r"(?:\b(?:additional experiments?|new experiments?|in vivo|in vitro validation|"
+                              r"wet[- ]lab|repeat the experiment|more (?:data|samples))\b|"
+                              r"补充实验|新增实验|动物实验|细胞实验|重复实验|补充样本|补充.*数据|补充.*结果|"
+                              r"增加.*实验|新增.*数据|补充.*曲线|补充.*切片)", re.I)
+NEEDS_CITATION = re.compile(r"(?:\b(?:cite|citation|reference|literature|prior work|related work)\b|"
+                            r"引用|文献|相关工作)", re.I)
+NEEDS_LIMITATION = re.compile(r"(?:\b(?:limitation|caveat|overstate|generaliz|scope)\b|"
+                              r"局限|过度|范围|推广|适用.*范围)", re.I)
 KIND_WORDS = {"clarify": ("clarif", "unclear", "explain", "define", "明确", "不清楚", "解释"),
               "data": ("data", "result", "number", "statistic", "数据", "结果", "数值"),
               "method": ("method", "protocol", "procedure", "方法", "流程")}
@@ -220,7 +221,7 @@ def manuscript_blocks(text: str) -> tuple[list[dict], list[str]]:
     return blocks, entries
 
 
-REVIEWER = re.compile(r"^\s*(?:Reviewer|Referee|\u5ba1\u7a3f\u4eba)\s*#?\s*(\d+)", re.I)
+REVIEWER = re.compile(r"^\s*#*\s*(?:Reviewer|Referee|\u5ba1\u7a3f\u4eba)\s*#?\s*(\d+)", re.I)
 
 
 def parse_comments(text: str, instruction: str) -> list[dict]:
@@ -270,14 +271,24 @@ def best_block(comment: str, blocks: list[dict]) -> tuple[dict | None, float]:
     for b in pool:
         shared = words(b["text"]) & cw
         # a shared 8-letter technical term says more than a shared "strength"
-        ov = sum(2 if len(w) >= 8 else 1 for w in shared)
+        # Chinese terms: 4+ chars are highly specific (e.g., "纳米载体")
+        ov = sum(2 if (len(w) >= 8 or (re.search(r"[\u4e00-\u9fff]", w) and len(w) >= 4)) else 1 for w in shared)
         if ov > score:
             best, score = b, ov
     if best is None or score < 2:
         # nothing overlaps: the closest useful anchor is a methods/limitations paragraph
         for b in blocks:
-            if re.search(r"(limitation|discussion|conclusion)", b["text"], re.I):
+            if re.search(r"(limitation|discussion|conclusion|讨论|结论|局限|方法)", b["text"], re.I):
                 return b, 1.0
+        # Chinese text: try to match by section keywords from the comment
+        if cw:
+            for b in pool:
+                shared = set()
+                for w in cw:
+                    if len(w) >= 2 and w in b["text"]:
+                        shared.add(w)
+                if len(shared) >= 1:
+                    return b, 1.0
         return (blocks[0] if blocks else None), 0.5
     return best, score
 
@@ -626,7 +637,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # exit 2 = "insufficient evidence" with result.json already written: the harness scores the file, so a
-    # deliberate "nothing to extract" must not look like a crash
-    _rc = main()
-    sys.exit(0 if _rc == 2 else _rc)
+    sys.exit(main())
