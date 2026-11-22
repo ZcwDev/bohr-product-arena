@@ -1,0 +1,46 @@
+{
+  "case_id": "C01",
+  "topic_id": "写作 06",
+  "topic_title": "学术写作客户端",
+  "difficulty": "基础",
+  "domain": "Actual supplied scientific source; local manuscript revision workflow",
+  "material_version": "2026-11-03.source-client.v1",
+  "source": {
+    "paper_id": "C01-PAPER",
+    "title": "Strengthening of 3D Printed Fused Deposition Manufactured Parts Using the Fill Compositing Technique",
+    "doi": "10.1371/journal.pone.0122915",
+    "source_url": "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0122915"
+  },
+  "task_instruction": "本案例用于“写作 06｜学术写作客户端”。在学术写作客户端场景中完成任务调用、局部修改、版本对照和异常反馈。 仅依据包内材料完成任务；材料未报告时明确说明，不能联网补写。 输出可编辑的目标产物、事实/证据映射、修改或生成记录和人工确认项；不得虚构材料外事实。 Execute the explicit public organizer-edit-workorder.json; it supplies the actual edit targets, minimal local workflow scope and required receipts. Full published scientific sources remain in scope for factual checks.",
+  "output_contract": {
+    "case_id": "原样保留",
+    "deliverable": "可编辑的目标文稿/结构化产物",
+    "preserved_facts": "数字、条件、术语和来源不可凭空改变",
+    "evidence_map": "关键论断到来源定位的映射",
+    "change_log": "修改动作、原因、人工确认项和未解决问题"
+  },
+  "evaluation": "固定输入；基础 Agent 与 Skill Agent 接收同一材料和任务；评分依据 reference-anchors.json 与题目评分项。",
+  "adaptation_flags": [
+    "draft"
+  ],
+  "case_input_version": "2026-11-03.source-client.v1",
+  "organizer_edit_workorder": {
+    "id": "ORGANIZER-writing-06-SOURCE-CLIENT-v1-C01",
+    "authority": "User-authorized organizer input repair; not source-owner approval",
+    "project_mode": "original_draft",
+    "target_ids": [
+      "C01-P002"
+    ],
+    "task": "Operate a real local revision workflow on the supplied manuscript. Add one substantive source-grounded editorial annotation at each target, explaining a scientific condition, limitation, or traceable clarification. Preserve original paragraph text, tables, formulas, citations, headings and all unrequested blocks. Use exact source quotations and state uncertainties.",
+    "operation_requirements": [
+      "Actual import/task receipt",
+      "Propose and individually accept or reject changes",
+      "Version comparison and actual rollback/reapplication",
+      "Real controlled invalid-operation exceptions with unchanged state",
+      "Editable manuscript, original/revised records, evidence map, real export preview"
+    ],
+    "consistency_scope": "Inspect actual target chapters and related definitions/methods/results; record terminology, reference anchors, scientific conditions and unresolved source conflicts. A mechanical inventory alone is not scientific verification.",
+    "boundaries": "Minimal offline local CLI workflow is allowed by the original task. No private remote client, coauthor account or Word tracked-change XML is supplied or required. Invalid operations are labeled deliberate fault injections, not remote platform failures. Source-derived working chapters are not a completed degree thesis.",
+    "source_fidelity": "Original publication bytes and contradictory source statements remain unchanged. Clearly distinguish new editorial annotations from original research. Do not invent new experiments or correct ambiguous units silently."
+  }
+}
