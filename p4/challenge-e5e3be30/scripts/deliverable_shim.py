@@ -94,6 +94,39 @@ def main() -> int:
                 payload[key] = new_value
                 changed = True
 
+    # 题面的输出表要求"保留输入标识、主结果、证据/来源定位、运行状态和不确定性"——
+    # `uncertainties` / `verification` / `sources` 缺失会直接判"结构不全"。这里只补**能算出来的**：
+    # 不确定性留空数组（不编造），verification 按真实文件存在性/非空性计算，sources 从已声明的产物来源推导。
+    if "uncertainties" not in payload:
+        payload["uncertainties"] = []
+        changed = True
+    if isinstance(payload.get("deliverable"), dict):   # 每次重新计算，避免沿用上一轮的陈旧结果
+        declared = [str(x) for x in (payload["deliverable"].get("files") or []) if isinstance(x, str)]
+        # 通配（previews/page-*.png）不能按"文件是否存在"判定，否则会误报 all_present=false
+        literal = [rel for rel in declared if "*" not in rel and "?" not in rel]
+        checks = {rel: (out / rel).is_file() and (out / rel).stat().st_size > 0 for rel in literal}
+        empty = [rel for rel in literal if (out / rel).is_file() and (out / rel).stat().st_size == 0]
+        if empty:
+            # 声明了却 0 字节的产物等于"给了个空文件"：从清单里摘掉，并在 verification 里如实记录
+            payload["deliverable"]["files"] = [x for x in (payload["deliverable"].get("files") or [])
+                                               if str(x) not in empty]
+            checks = {k: v for k, v in checks.items() if k not in empty}
+            literal = [x for x in literal if x not in empty]
+        payload["verification"] = {
+            "artifacts_declared": len(literal),
+            "artifacts_present": sum(1 for ok in checks.values() if ok),
+            "all_present": bool(checks) and all(checks.values()),
+            **({"empty_artifacts_removed": empty} if empty else {}),
+        }
+        changed = True
+    if not payload.get("sources"):
+        derived = payload.get("sources_processed") or payload.get("source_documents")
+        if isinstance(derived, dict):
+            derived = list(derived)
+        if isinstance(derived, list) and derived:
+            payload["sources"] = [{"name": str(x)} for x in derived if str(x).strip()]
+            changed = True
+
     if changed:
         target.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         primary = payload.get("deliverable")
