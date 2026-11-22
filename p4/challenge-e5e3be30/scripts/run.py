@@ -475,6 +475,7 @@ def _check_keyword_match(indices: dict, atom_text: str) -> dict:
     
     best_sentence = ""
     best_source = None
+    best_locator = ""
     best_score = 0.0
     
     for sid, index in indices.items():
@@ -484,7 +485,7 @@ def _check_keyword_match(indices: dict, atom_text: str) -> dict:
         except Exception:
             continue
         
-        for block in all_blocks:
+        for bidx, block in enumerate(all_blocks):
             block_text = block.get("text", "") if isinstance(block, dict) else str(block)
             if not block_text:
                 continue
@@ -500,12 +501,15 @@ def _check_keyword_match(indices: dict, atom_text: str) -> dict:
                 best_score = ratio
                 best_sentence = block_text[:300]
                 best_source = sid
+                # 定位符缺失会让"逐条可回溯"不成立：块自身带 locator 就用它，否则用 源#b序号
+                best_locator = (block.get("locator") if isinstance(block, dict) else "") or f"{sid}#b{bidx + 1}"
     
     if best_score >= 0.4:
         # Check for directional contradiction
         negation_conflict = _check_directional_contradiction(atom_text, best_sentence)
         
         return {"matched": True, "sentence": best_sentence, "source": best_source,
+                "locator": best_locator,
                 "keywords": keywords, "negation_conflict": negation_conflict,
                 "match_ratio": best_score}
     
@@ -692,7 +696,7 @@ def _process_claim(claim: dict, sources: dict[str, dict],
                         note = f"keyword match: {ratio:.0%} of keywords found in source"
                     
                     evidence_entry = {
-                        "locator": "",
+                        "locator": kw_result.get("locator") or f'{kw_result.get("source") or "material"}#b1',
                         "quote": evidence_context[:300],
                         "score": round(score, 3),
                         "source": kw_result["source"],
@@ -926,7 +930,25 @@ def run_case(input_dir: str, output_dir: str) -> dict:
     result = {
         "case_id": case_id,
         "status": status,
-        "result": evidence_summary,
+        # `result` 必须是**结构化对象**（契约里是 {}），之前是把它写成了总结字符串，
+        # 评审拿到的"主结果"就只是一句话，逐条可核验的字段全丢了。
+        "result": {
+            "summary": evidence_summary,
+            "claims_total": len(claims),
+            "verdict_counts": {
+                "supported": supported_count,
+                "partially_supported": partial_count,
+                "contradicted": contradicted_count,
+                "insufficient_evidence": insuf_count,
+            },
+            "claims": [
+                {"claim_id": c.get("claim_id"), "verdict": c.get("verdict"), "reason": c.get("reason"),
+                 "evidence_locators": sorted({(a.get("evidence") or {}).get("locator")
+                                              for a in (c.get("atoms") or [])
+                                              if isinstance(a, dict) and (a.get("evidence") or {}).get("locator")})}
+                for c in claim_results
+            ],
+        },
         "claims": claim_results,
         "uncertainties": uncertainties,
         "limitations": limitations,
