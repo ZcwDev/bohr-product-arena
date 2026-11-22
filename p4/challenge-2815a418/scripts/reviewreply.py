@@ -200,6 +200,23 @@ REF_ENTRY = re.compile(r"^\s*(?:\[?\d{1,3}\]?\.?)\s+[A-Z][A-Za-z.\-]+.*"
                        r"(?:\b(?:19|20)\d{2}\b|doi|https?://)", re.S)
 
 
+def annotate_locs(revised: str, blocks: list[dict]) -> str:
+    """Append the manuscript locator to every body paragraph that came verbatim from the source.
+
+    题面要求"事实与来源映射：可逐条回溯"，而修订稿此前只有段落、没有定位。这里只在**逐字出现**的原段末尾
+    追加 `〔pNNN〕`；被编辑过的段落保持原样（改动本身在 response_letter 与 response_map.tsv 里另有定位）。
+    """
+    out = revised
+    for b in blocks:
+        text = str(b.get("text") or "").strip()
+        loc = str(b.get("locator") or "").strip()
+        if not text or not loc or text.lstrip().startswith("#") or f"〔{loc}〕" in out:
+            continue
+        if text in out:
+            out = out.replace(text, f"{text}〔{loc}〕", 1)
+    return out
+
+
 def manuscript_blocks(text: str) -> tuple[list[dict], list[str]]:
     blocks, refs, skip = [], [], False
     for i, para in enumerate(re.split(r"\n\s*\n", text), 1):
@@ -557,6 +574,7 @@ def main() -> int:
     decisions = [decide(item, blocks, refs) for item in items]
     revised, where = apply_edits(blocks, decisions)
     checks = verify(revised, decisions)
+    revised = annotate_locs(revised, blocks)
     (out / "manuscript_revised.md").write_text(
         f"# Revised manuscript (case {case_id})\n\n{revised}\n", encoding="utf-8")
     letter_lines = []
