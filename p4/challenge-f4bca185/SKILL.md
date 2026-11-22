@@ -1,5 +1,5 @@
 ---
-name: 文献数据清洗与标准化
+name: literature-data-cleaning-standardize
 description: 把杂乱文献数据整理成可复算的清洗台账：缺失/删失/零值三分、异常只标记不删除、单位换算留因子、日期统一 ISO、规则聚合与文件对账，每步带定位与前后计数。
 ---
 
