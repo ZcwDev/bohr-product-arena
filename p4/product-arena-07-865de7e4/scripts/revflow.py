@@ -1301,11 +1301,32 @@ def load_case(inp: Path) -> tuple[str, dict]:
             d = json.loads(cand.read_text(encoding="utf-8"))
         except Exception:
             continue
-        if isinstance(d, dict) and ("organizer_edit_workorder" in d or "output_contract" in d):
+        # Accept the case file even when it carries no workorder: the hard gate is that `case_id` must be
+        # copied verbatim from it, and a fabricated "unreported" id voids the whole submission.
+        if isinstance(d, dict) and (cand == p or "case_id" in d or "organizer_edit_workorder" in d
+                                    or "output_contract" in d):
             case = d
+            if cand == p:
+                break
+    case_id = str(case.get("case_id") or case.get("id") or "")
+    if not case_id:
+        # last resort: read the id out of the task text rather than inventing one
+        import re as _re
+        for txt in sorted(inp.rglob("*.md")):
+            m = _re.search(r"case_id\W{0,4}([A-Za-z0-9][\w.\-]{2,})", txt.read_text(encoding="utf-8", errors="replace"))
+            if m:
+                case_id = m.group(1)
+                break
+    case_id = case_id or "not_provided"
+    # The key name is the organizer's choice; accept the common aliases instead of silently returning an
+    # empty workorder (an empty workorder means no targets, an empty change_log and an unscorable result).
+    workorder = {}
+    for key in ("organizer_edit_workorder", "workorder", "edit_workorder", "revision_workorder",
+                "task_workorder", "organizer_workorder"):
+        cand = case.get(key)
+        if isinstance(cand, dict) and cand:
+            workorder = cand
             break
-    case_id = str(case.get("case_id") or "unreported")
-    workorder = case.get("organizer_edit_workorder") or {}
     return case_id, workorder
 
 
