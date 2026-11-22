@@ -1044,7 +1044,9 @@ def create_annotations(answers: list[dict], sources: list[dict]) -> list[dict]:
                 "question_id": ans["question_id"],
                 "question": ans["question"][:200],
                 "answer_summary": ans.get("answer_text", "")[:200],
-                "evidence_locator": ev["locator"],
+                # 题面要"文件#定位"：locator 只有块号时补上源文件，评审才能直接翻回原文
+                "evidence_locator": (ev["locator"] if "#" in str(ev.get("locator", ""))
+                                     else f'{ev.get("source_id") or "material"}#{ev.get("locator")}'),
                 "evidence_source": ev.get("source_id", ""),
                 "evidence_page": ev.get("page", 0),
                 "evidence_quote": ev.get("quote", "")[:200],
