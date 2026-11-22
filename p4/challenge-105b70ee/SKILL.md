@@ -13,6 +13,9 @@ description: 当任务属于「文献结论与数据提取」这一类——按�
 
 ## 0. 第一步永远是读案例契约（不要跳过）
 
+> **交付状态红线**：顶层 `status` 只用「成功 / 部分完成」；`无法判断`/`unable`/`insufficient_evidence`
+> 仅在**完全没有可读输入**时才用（会被判 0）。只要读到材料，就必须交一份带缺口说明的「部分完成」。
+
 ```bash
 # 本 Skill 在评测环境里的安装位置（找不到就全局搜一下）
 SKILL_DIR=${SKILL_DIR:-/skills/weekly-skill}

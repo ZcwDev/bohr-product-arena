@@ -33,7 +33,7 @@ import sys
 KNOWN = {"case_id", "status", "result", "claims", "uncertainties", "limitations",
          "change_log", "source", "sources", "exceptions", "notes", "evidence",
          "answer", "findings", "deliverable_kind"}
-EXAMPLE_CASE_ID = "EXAMPLE-NOT-A-TEST-CASE"
+EXAMPLE_CASE_ID = "EXAMPLE-NOT-A-DEMO-CASE"
 
 
 def _load(path, default=None):
