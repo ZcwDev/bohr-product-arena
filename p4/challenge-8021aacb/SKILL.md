@@ -30,6 +30,7 @@ python3 /skills/weekly-skill/scripts/docstruct.py --input /input --output /app/o
 | 补漏与校对 | 420–780s | 覆盖写 `result.json`，`change_log`/`uncertainties` 只增不删 |
 | 收尾 | 剩下的时间 | 不再重写，只补 `limitations` 与导出件 |
 
+
 规则：
 
 1. **先落一版能过契约校验的结果，再改进**；不允许把「还在读材料」当成完成态。
@@ -37,6 +38,7 @@ python3 /skills/weekly-skill/scripts/docstruct.py --input /input --output /app/o
 3. 值不值得再花一次请求，用这个判据：*这次调用能不能让某个字段变成「有据可查的值」？* 不能就停手。
 4. 大材料不要整篇塞进上下文：先建索引（定位符），只取与当前字段相关的块。
 5. 到 780s 还没收尾，就**停止改进、只做导出与自检**：超时会被判成失败，已落盘的部分结果才计分。
+6. **单次回答保持简短**（≤ 300 字、≤ 2000 tokens）：评测里主要耗时是模型往返，不是脚本；不要复述文件内容、不要每步都总结，能一次 `python3 <脚本>` 解决的就不要拆成多轮对话。
 
 # 论文结构与逻辑优化
 
