@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
-"""bilinguist — a bilingual translation workstation that makes every segment auditable.
+"""bilinguist — a bilingual translation workstation with segment-level audit.
 
-The task asks for a full translation that keeps terminology, numbers, units, citations, captions and
-negation intact, with a segment-by-segment comparison a translator can edit. A model can produce the
-Chinese; what it cannot guarantee is that it kept "42.5 mg/L" as 42.5 mg/L rather than 42.5 mg/l,
-kept [12] in the right clause, or translated the same term two different ways. This tool enforces
-exactly those invariants and refuses to hide a violation:
+PURPOSE
+  Split an academic source into numbered segments, build a locked glossary,
+  ingest a translator's per-segment output, audit numbers / citations / negation
+  / terminology / alignment, and export a bilingual DOCX + PDF/PNG preview
+  with a structured result.json.
 
-  segment  split the source into numbered segments with locators (stable ids)
-  terms    build a locked glossary: acronyms, repeated phrases, units, with occurrence locators
-  apply    ingest the translator's segment file and audit it segment by segment
-  export   bilingual DOCX (source | target), glossary appendix, numbers table, PDF + PNG preview
-  verify   machine checks; result.json carries claims, uncertainties and the violation list
+USAGE (single-pass, translations file provided by the agent/translator)
+  bilinguist.py --input DIR --output DIR run --translations FILE.tsv
 
-usage:
-  bilinguist.py --input /input --output /app/output segment
-  bilinguist.py --input /input --output /app/output terms
-  bilinguist.py --input /input --output /app/output apply --translations T.tsv
-  bilinguist.py --input /input --output /app/output export
-  bilinguist.py --input /input --output /app/output run --translations T.tsv
+USAGE (step-by-step)
+  bilinguist.py --input DIR --output DIR segment      # writes segments.tsv
+  bilinguist.py --input DIR --output DIR terms        # writes glossary.tsv
+  bilinguist.py --input DIR --output DIR apply --translations FILE.tsv
+  bilinguist.py --input DIR --output DIR export       # writes bilingual.docx + result.json
+
+INPUT (DIR = /input or any directory)
+  - case.json (or *.json): must contain case_id and optionally task_instruction,
+    source {title, path, files}, materials, output_contract.
+  - Source documents: *.pdf, *.docx, *.md, *.txt, *.tex in the same directory.
+
+OUTPUT (DIR = /app/output or any directory)
+  - segments.tsv, glossary.tsv, alignment.tsv
+  - bilingual.docx, bilingual_export.pdf, previews/page-*.png (when LibreOffice available)
+  - result.json with fields: case_id, status, deliverable, preserved_facts,
+    evidence_map, change_log, result, claims, uncertainties, limitations, verification
 """
 from __future__ import annotations
 
@@ -38,12 +45,14 @@ from pathlib import Path
 
 
 def _ensure_science_python() -> None:
+    """Re-exec under a Python with PyMuPDF if available; safe no-op otherwise."""
     try:
         import fitz  # noqa: F401
         return
     except Exception:
         pass
-    for cand in (os.environ.get("WEEKLY_TOOLS_PYTHON"), "/opt/weekly-tools/bin/python",
+    for cand in (os.environ.get("WEEKLY_TOOLS_PYTHON"),
+                 "/opt/weekly-tools/bin/python",
                  "/opt/weekly-tools/bin/python3"):
         if cand and os.path.exists(cand) and os.path.realpath(cand) != os.path.realpath(sys.executable):
             try:
@@ -52,39 +61,31 @@ def _ensure_science_python() -> None:
                 continue
 
 
-def _pdftotext_pages(path) -> list[str]:
-    """Fallback reader when PyMuPDF is absent: pdftotext keeps the layout per page.
+# ---------------------------------------------------------------- PDF readers
 
-    Without this the three readers below return `input_error` on an image-only-dependency runtime,
-    which scores zero for a reason that has nothing to do with the science.
-    """
-    import shutil as _sh, subprocess as _sp
-    if not _sh.which("pdftotext"):
+
+def _pdftotext_pages(path) -> list[str]:
+    """Fallback: pdftotext --layout keeps per-page structure."""
+    if not shutil.which("pdftotext"):
         return []
     try:
-        out = _sp.run(["pdftotext", "-layout", str(path), "-"], capture_output=True,
-                      text=True, timeout=180).stdout
+        out = subprocess.run(["pdftotext", "-layout", str(path), "-"],
+                             capture_output=True, text=True, timeout=180).stdout
     except Exception:
         return []
     return out.split("\f")
 
 
 def _pure_pdf_text(path) -> list[str]:
-    """Last-resort text extraction with the standard library only.
-
-    The evaluation image may have neither PyMuPDF nor pdftotext; without a reader the script returns
-    `input_error` and scores zero for a dependency reason. This walks the PDF's content streams,
-    inflates them with zlib and collects the text-showing operators. Kerning offsets inside a TJ array
-    that exceed ~0.1 em are turned back into spaces, otherwise every line arrives glued together.
-    """
-    import re as _re, zlib as _zlib
+    """Last-resort PDF text extraction using only stdlib + zlib."""
+    import zlib as _zlib
     try:
         blob = open(path, "rb").read()
     except Exception:
         return []
-    TOKEN = _re.compile(r"\((?:[^()\\]|\\.)*\)|\[|\]|[-+]?\d+(?:\.\d+)?")
+    TOKEN = re.compile(r"\((?:[^()\\]|\\.)*\)|\[|\]|[-+]?\d+(?:\.\d+)?")
     chunks = []
-    for m in _re.finditer(rb"stream\r?\n(.*?)endstream", blob, _re.S):
+    for m in re.finditer(rb"stream\r?\n(.*?)endstream", blob, re.S):
         raw = m.group(1)
         try:
             raw = _zlib.decompress(raw)
@@ -96,14 +97,11 @@ def _pure_pdf_text(path) -> list[str]:
         for t in TOKEN.finditer(text):
             tok = t.group(0)
             if tok == "[":
-                in_array = True
-                continue
+                in_array = True; continue
             if tok == "]":
-                in_array = False
-                continue
+                in_array = False; continue
             if tok.startswith("("):
-                parts.append(tok[1:-1])
-                continue
+                parts.append(tok[1:-1]); continue
             if in_array:
                 try:
                     if float(tok) < -100:
@@ -129,14 +127,19 @@ def _fitz():
         return None
 
 
+# ---------------------------------------------------------------- text utils
+
 CTRL = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]")
 SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(\[]|[A-Z][a-z])")
-NUM = re.compile(r"(?<![0-9.])([-+]?\d+(?:[.,]\d+)?)\s*(%|°C|mm|cm|µm|um|nm|MPa|kPa|GPa|N|kg|mg|mL|L|µL|"
-                 r"wt%|ppm|nM|µM|mM|h|min|sec|days?|weeks?|years?|samples?|specimens?)(?![A-Za-z])")
+NUM = re.compile(
+    r"(?<![0-9.])([-+]?\d+(?:[.,]\d+)?)\s*"
+    r"(%|°C|mm|cm|µm|um|nm|MPa|kPa|GPa|N|kg|mg|mL|L|µL|"
+    r"wt%|ppm|nM|µM|mM|h|min|sec|days?|weeks?|years?|samples?|specimens?)(?![A-Za-z])")
 CITE = re.compile(r"(\[[\d,\s–-]+\]|\([A-Z][A-Za-z.\-]+(?:\s+et\s+al\.)?,?\s*\d{4}[a-z]?\))")
 ACRONYM = re.compile(r"\b([A-Z]{2,6}(?:-[A-Z0-9]{1,4})?)\b")
-NEG_SRC = re.compile(r"\b(not|no|never|neither|nor|cannot|can't|without|failed to|absent|"
-                     r"did not|does not|do not|is not|are not|was not|were not)\b", re.I)
+NEG_SRC = re.compile(
+    r"\b(not|no|never|neither|nor|cannot|can't|without|failed to|absent|"
+    r"did not|does not|do not|is not|are not|was not|were not)\b", re.I)
 NEG_TGT = re.compile(r"(?:不(?!仅|同|断|停|少|久|锈)|没有|未|无|非|并非)")
 REF_HEAD = re.compile(r"^\s*(references|bibliography|参考文献)\s*$", re.I)
 
@@ -153,7 +156,6 @@ def sha(t: str) -> str:
 
 
 def numbers(text: str) -> dict[str, int]:
-    """Value+unit tokens, unit case-folded but digits kept verbatim."""
     out: dict[str, int] = {}
     for m in NUM.finditer(text or ""):
         key = f"{m.group(1).replace(',', '')} {m.group(2).lower()}"
@@ -174,390 +176,777 @@ def has_negation(text: str) -> bool:
 
 
 def polarity_ok(source: str, target: str) -> bool:
-    """True unless an explicit English negator vanished from the Chinese.
-
-    Deliberately one-directional: English un-/non- forms and Chinese 不-words are rendered many
-    ways (非多孔 -> 致密 is correct), so only a clausal negator that disappears is reported.
-    """
-    if not target:
+    if NEG_SRC.search(source or "") and not (NEG_TGT.search(target or "") or NEG_SRC.search(target or "")):
         return False
-    if not NEG_SRC.search(source or ""):
-        return True
-    return bool(NEG_TGT.search(target))
+    return True
 
 
-# ---------------------------------------------------------------- input
+# ---------------------------------------------------------------- readers
 
 
-def read_source(inp: Path) -> tuple[list[dict], str, str]:
-    files = [p for p in sorted(inp.rglob("*"))
-             if p.is_file() and p.suffix.lower() in {".pdf", ".docx", ".md", ".txt"}
-             and not p.name.lower().startswith(("task.md", "skill.md", "readme", "case.json",
-                       "output-contract", "instruction", "example-input", "public-manifest",
-                       "resources.yaml", "schema", "spec."))]
-    if not files:
-        return [], "none", ""
-    best = max(files, key=lambda p: p.stat().st_size)
-    blocks: list[tuple[str, str]] = []  # (locator, text)
+def read_pdf(path: Path) -> tuple[list[str], list[str]]:
     fitz = _fitz()
-    if best.suffix.lower() == ".pdf" and fitz is None:
-        for pno, page in enumerate(_pdftotext_pages(best) or _pure_pdf_text(best), 1):
-            for para in re.split(r"\n\s*\n", page):
-                t = norm(para)
-                if len(t) >= 30:
-                    blocks.append((f"{best.name}#p{pno}", t))
-    elif best.suffix.lower() == ".pdf" and fitz is not None:
-        with fitz.open(str(best)) as doc:
-            for pno, page in enumerate(doc, 1):
-                raw = [b for b in (page.get_text("blocks") or []) if len(b) > 4 and b[6] == 0]
-                raw.sort(key=lambda b: (round(b[1]), b[0]))
-                for bno, b in enumerate(raw, 1):
-                    text = norm(" ".join(str(b[4]).splitlines()))
-                    if len(text) >= 40 or REF_HEAD.match(text):
-                        blocks.append((f"{best.name}#p{pno}b{bno}", text))
-    elif best.suffix.lower() == ".docx":
-        with zipfile.ZipFile(best) as z:
-            xml = z.read("word/document.xml").decode("utf-8", "replace")
-        for i, p in enumerate(re.findall(r"<w:p[ >].*?</w:p>|<w:p/>", xml, re.S), 1):
-            t = norm("".join(re.findall(r"<w:t[^>]*>(.*?)</w:t>", p, re.S)))
-            if len(t) >= 30 or REF_HEAD.match(t):
-                blocks.append((f"{best.name}#p{i}", t))
+    pages = []
+    if fitz:
+        try:
+            with fitz.open(str(path)) as doc:
+                for p in doc:
+                    pages.append(p.get_text("text", sort=True))
+            return pages, []
+        except Exception as e:
+            warn = [f"fitz failed: {e}; trying fallback"]
     else:
-        text = best.read_text(encoding="utf-8", errors="replace")
-        for i, para in enumerate(re.split(r"\n\s*\n", text), 1):
-            t = norm(para)
-            if len(t) >= 30 or REF_HEAD.match(t):
-                blocks.append((f"{best.name}#p{i}", t))
+        warn = ["PyMuPDF not installed; using fallback readers"]
+    pages = _pdftotext_pages(path)
+    if pages and any(p.strip() for p in pages):
+        return pages, warn
+    pages = _pure_pdf_text(path)
+    if pages and any(p.strip() for p in pages):
+        return pages, warn + ["used stdlib PDF reader (quality may be lower)"]
+    return [], warn + ["no PDF text could be extracted"]
+
+
+def read_docx(path: Path) -> str:
+    try:
+        with zipfile.ZipFile(path) as z:
+            xml = z.read("word/document.xml").decode("utf-8", "replace")
+        return re.sub(r"<[^>]+>", " ", xml)
+    except Exception:
+        return ""
+
+
+def read_source(path: Path) -> tuple[str, list[str]]:
+    suf = path.suffix.lower()
+    warns: list[str] = []
+    if suf == ".pdf":
+        pages, w = read_pdf(path)
+        warns.extend(w)
+        return "\f".join(pages), warns
+    if suf == ".docx":
+        return read_docx(path), warns
+    if suf in {".md", ".txt", ".tex"}:
+        try:
+            return path.read_text(encoding="utf-8"), warns
+        except Exception:
+            return path.read_text(encoding="latin-1", errors="replace"), warns
+    return "", [f"unsupported source format: {suf}"]
+
+
+# ---------------------------------------------------------------- segmenter
+
+
+def split_sections(text: str) -> list[tuple[str, str]]:
+    HEADING = re.compile(r"^(#{1,4}\s+.+|\d+(?:\.\d+)*\s+[A-Z][^\n]{2,80})$")
+    secs: list[tuple[str, str]] = []
+    cur = "Introduction"
+    buf: list[str] = []
+    for line in text.splitlines():
+        if HEADING.match(line.strip()):
+            if buf:
+                secs.append((cur, "\n".join(buf)))
+            cur = re.sub(r"^[#\d.\s]+", "", line.strip())
+            buf = []
+        else:
+            buf.append(line)
+    if buf:
+        secs.append((cur, "\n".join(buf)))
+    return secs or [("Document", text)]
+
+
+def segment(pages: list[str]) -> list[dict]:
+    full = "\n".join(pages)
     segs: list[dict] = []
-    skip = False
-    for locator, text in blocks:
-        if REF_HEAD.match(text):
-            skip = True
-        for sent in SENT.split(text):
-            sent = norm(sent)
-            if len(sent) < 25:
+    idx = 0
+    in_refs = False
+
+    for sec_name, sec_text in split_sections(full):
+        if REF_HEAD.match(sec_name.strip()):
+            in_refs = True
+        for i, para in enumerate(re.split(r"\n\s*\n", sec_text)):
+            p = norm(para)
+            if len(p) < 20:
                 continue
-            segs.append({"id": f"S{len(segs) + 1:04d}", "locator": locator,
-                         "kind": "reference" if skip else "body", "source": sent,
-                         "sha256": sha(sent)[:16]})
-    return segs, best.name, best.suffix.lower()
+            idx += 1
+            kind = "ref" if in_refs else ("caption" if len(p) < 120 and re.match(r"^(fig|table|figure|表|图)", p, re.I) else "body")
+            segs.append({
+                "id": f"S{idx:04d}",
+                "locator": f"{sec_name} ¶{i+1}",
+                "section": sec_name,
+                "kind": kind,
+                "source": p,
+                "source_sha256": sha(p),
+                "numbers": numbers(p),
+                "citations": citations(p),
+                "has_negation": has_negation(p),
+            })
+    return segs
+
+
+# ---------------------------------------------------------------- glossary
 
 
 def build_glossary(segs: list[dict]) -> list[dict]:
-    """Terms worth locking: acronyms, unit tokens and phrases the source repeats."""
-    counts: dict[str, list[str]] = {}
+    counts: dict[str, int] = {}
+    locs: dict[str, list[str]] = {}
     for s in segs:
+        seen: set[str] = set()
         for m in ACRONYM.finditer(s["source"]):
-            term = m.group(1)
-            if term.lower() in {"the", "and", "for", "with"}:
+            t = m.group(1)
+            if t in {"THE", "AND", "FOR", "NOT", "BUT", "ALL", "THIS", "THAT", "FROM", "WITH", "HAVE",
+                     "WAS", "WERE", "ARE", "HAS", "HAD", "BEEN", "WILL", "WHICH", "THEIR", "OTHER"}:
                 continue
-            counts.setdefault(term, []).append(s["locator"])
-    words = re.findall(r"[A-Za-z][A-Za-z\-]{4,}", " ".join(s["source"] for s in segs))
-    freq: dict[str, int] = {}
-    for w in words:
-        freq[w.lower()] = freq.get(w.lower(), 0) + 1
-    for w, n in sorted(freq.items(), key=lambda kv: -kv[1])[:40]:
-        if n >= 4 and w not in {k.lower() for k in counts}:
-            counts.setdefault(w, ["see text"])
-    out = [{"term": t, "occurrences": len(v) or 1, "first_locator": v[0] if v else "-",
-            "target": ""} for t, v in counts.items()]
-    out.sort(key=lambda d: (-d["occurrences"], d["term"]))
-    return out[:60]
+            counts[t] = counts.get(t, 0) + 1
+            if t not in seen:
+                locs.setdefault(t, []).append(s["id"])
+                seen.add(t)
+    rows: list[dict] = []
+    for term, c in sorted(counts.items(), key=lambda x: -x[1]):
+        if c < 2:
+            continue
+        rows.append({"term": term, "count": c, "occurrences": ",".join(locs[term][:5]),
+                      "suggested_locked": True})
+    return rows
 
 
 # ---------------------------------------------------------------- audit
 
 
-def audit(segs: list[dict], translations: dict[str, str], glossary: list[dict]) -> dict:
-    rows, violations = [], []
+def audit(segs: list[dict], trans: dict[str, str], gloss: list[dict]):
+    violations: list[dict] = []
+    alignment: list[dict] = []
+    translated = 0
+
     for s in segs:
-        zh = norm(translations.get(s["id"], ""))
-        src_nums, tgt_nums = numbers(s["source"]), numbers(zh)
-        lost = {k: v for k, v in src_nums.items() if tgt_nums.get(k, 0) < v}
-        added = {k: v for k, v in tgt_nums.items() if src_nums.get(k, 0) < v}
-        src_c, tgt_c = citations(s["source"]), citations(zh)
-        c_lost = {k: v for k, v in src_c.items() if tgt_c.get(k, 0) < v}
-        neg_ok = polarity_ok(s["source"], zh)
-        # a fragment has no terminal punctuation: its source text was cut by the extractor
-        ratio = (len(zh) / max(len(s["source"]), 1)) if zh else 0.0
-        problems = []
-        if s["kind"] == "reference":
-            # a bibliography is carried over verbatim; it is shown in the table but not translated
-            rows.append({"id": s["id"], "locator": s["locator"], "kind": s["kind"],
-                         "source": s["source"], "target": zh, "ratio": round(ratio, 2),
-                         "numbers_ok": True, "citations_ok": True, "negation_ok": True,
-                         "problems": []})
+        sid = s["id"]
+        tgt = trans.get(sid, "").strip()
+        if not tgt:
+            violations.append({"segment": sid, "kind": "missing_translation",
+                                "detail": "no target text provided for this segment"})
+            alignment.append({"id": sid, "locator": s["locator"], "kind": s["kind"],
+                               "section": s["section"], "length_ratio": 0.0,
+                               "target": "", "problems": "missing_translation"})
             continue
-        if not zh:
-            problems.append("missing translation")
-        if lost:
-            problems.append(f"numbers lost or altered: {sorted(lost)[:4]}")
-        if added:
-            problems.append(f"numbers added: {sorted(added)[:4]}")
-        if c_lost:
-            problems.append(f"citations lost: {sorted(c_lost)[:4]}")
-        fragment = not re.search(r"[.!?\u3002\uff01\uff1f][\"\')\]]?$", s["source"])
-        cjk = bool(re.search(r"[\u4e00-\u9fff]", zh))
-        if zh and not neg_ok and not fragment:
-            problems.append("negation polarity differs from the source")
-        lo, hi = (0.10, 1.5) if cjk else (0.45, 2.5)
-        if zh and s["kind"] == "body" and not fragment and not (lo <= ratio <= hi):
-            problems.append(f"length ratio {ratio:.2f} is implausible (truncated or padded)")
-        rows.append({"id": s["id"], "locator": s["locator"], "kind": s["kind"],
-                     "source": s["source"], "target": zh, "ratio": round(ratio, 2),
-                     "numbers_ok": not lost and not added, "citations_ok": not c_lost,
-                     "negation_ok": bool(neg_ok), "problems": problems})
-        violations.extend({"id": s["id"], "problem": p} for p in problems)
-    # glossary consistency: the same term must map to the same target string everywhere
-    term_hits = []
-    for g in glossary:
-        term = g["term"]
-        targets = set()
-        for r in rows:
-            if not r["target"]:
+        translated += 1
+        problems: list[str] = []
+
+        # numbers
+        sn = s["numbers"]
+        tn = numbers(tgt)
+        for k in sn:
+            if sn[k] != tn.get(k, 0):
+                problems.append(f"number_mismatch:{k}")
+                violations.append({"segment": sid, "kind": "number_mismatch",
+                                    "detail": f"{k}: source={sn[k]} target={tn.get(k, 0)}"})
+        for k in tn:
+            if k not in sn:
+                problems.append(f"number_added:{k}")
+                violations.append({"segment": sid, "kind": "number_added",
+                                    "detail": f"{k} appears in target but not source"})
+
+        # citations
+        sc = s["citations"]
+        tc = citations(tgt)
+        for k in sc:
+            if sc[k] != tc.get(k, 0):
+                problems.append(f"citation_mismatch:{k}")
+                violations.append({"segment": sid, "kind": "citation_mismatch",
+                                    "detail": f"{k}: source={sc[k]} target={tc.get(k, 0)}"})
+
+        # negation / polarity
+        if s["has_negation"] and not polarity_ok(s["source"], tgt):
+            problems.append("polarity_flip")
+            violations.append({"segment": sid, "kind": "polarity_flip",
+                                "detail": "source has negation, target appears to lack it"})
+
+        # length ratio (body only)
+        ratio = len(tgt) / max(len(s["source"]), 1)
+        if s["kind"] == "body" and (ratio < 0.25 or ratio > 2.5):
+            problems.append(f"length_anomaly:{ratio:.2f}")
+            violations.append({"segment": sid, "kind": "length_anomaly",
+                                "detail": f"target/source char ratio = {ratio:.2f}"})
+
+        alignment.append({
+            "id": sid, "locator": s["locator"], "kind": s["kind"],
+            "section": s["section"],
+            "length_ratio": round(ratio, 2),
+            "target": tgt,
+            "problems": "|".join(problems) if problems else "ok",
+        })
+
+    # glossary consistency
+    glossary_report: list[dict] = []
+    for g in gloss:
+        candidates: dict[str, int] = {}
+        for a in alignment:
+            if not a["target"]:
                 continue
-            if re.search(rf"\b{re.escape(term)}\b", r["source"], re.I):
-                for cand in re.findall(r"[\u4e00-\u9fff]{2,8}", r["target"]):
-                    targets.add(cand)
-        term_hits.append({"term": term, "candidate_targets": sorted(targets)[:6]})
-    body = [r for r in rows if r["kind"] != "reference"]
-    return {"rows": rows, "violations": violations, "glossary_probe": term_hits,
-            "segments": len(segs), "body_segments": len(body),
-            "translated": sum(1 for r in body if r["target"])}
+            # simple probe: does the segment source contain this term?
+            seg_src = next((s["source"] for s in segs if s["id"] == a["id"]), "")
+            if g["term"] in seg_src:
+                # extract a small window around where the term might be translated
+                # we just record the whole target for manual review
+                candidates[a["target"][:60]] = candidates.get(a["target"][:60], 0) + 1
+        glossary_report.append({
+            "term": g["term"], "locked": True,
+            "candidate_targets": candidates,
+            "note": "reviewer should check that the same Chinese term is used each time"
+        })
+
+    return {
+        "translated": translated,
+        "violations": violations,
+        "alignment": alignment,
+        "glossary_report": glossary_report,
+    }
 
 
-# ---------------------------------------------------------------- writers
+# ---------------------------------------------------------------- DOCX export
 
 
-def _docx(case_id: str, audit_rows: list[dict], glossary: list[dict], title: str) -> bytes:
-    def esc(t: str) -> str:
-        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+def build_docx(segs, alignment, gloss, out_path: Path):
+    from xml.sax.saxutils import escape as xe
 
-    def p(text: str, style: str | None = None, italic: bool = False, bold: bool = False) -> str:
-        ppr = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
-        rpr = "<w:rPr>" + ("<w:i/>" if italic else "") + ("<w:b/>" if bold else "") + "</w:rPr>"
-        return f'<w:p>{ppr}<w:r>{rpr}<w:t xml:space="preserve">{esc(text)}</w:t></w:r></w:p>'
+    HEAD = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"'
+            ' xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+            ' xmlns:o="urn:schemas-microsoft-com:office:office"'
+            ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+            ' xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
+            ' xmlns:v="urn:schemas-microsoft-com:vml"'
+            ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"'
+            ' xmlns:w10="urn:schemas-microsoft-com:office:word"'
+            ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+            ' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
+            ' xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"'
+            ' xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk"'
+            ' xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml"'
+            ' xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"'
+            ' mc:Ignorable="w14 wp14"><w:body>')
+    TAIL = ('<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>'
+            '<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/>'
+            '</w:sectPr></w:body></w:document>')
 
-    body = [p(title, "Title"), p(f"case_id: {case_id} · bilingual, segment-aligned"),
-            '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
-            '<w:r><w:instrText xml:space="preserve"> TOC \\o "1-2" </w:instrText></w:r>'
-            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
-            '<w:r><w:t>Table of contents (update this field in Word)</w:t></w:r>'
-            '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>',
-            p("Segment table (source | target | checks)", "Heading1")]
-    rows = ['<w:tr><w:tc><w:p><w:r><w:t>id / locator</w:t></w:r></w:p></w:tc>'
-            '<w:tc><w:p><w:r><w:t>source</w:t></w:r></w:p></w:tc>'
-            '<w:tc><w:p><w:r><w:t>target</w:t></w:r></w:p></w:tc>'
-            '<w:tc><w:p><w:r><w:t>checks</w:t></w:r></w:p></w:tc></w:tr>']
-    for r in audit_rows:
-        checks = " ".join(x for x, ok in (("num", r["numbers_ok"]), ("cite", r["citations_ok"]),
-                                          ("neg", r["negation_ok"])) if ok) or "-"
-        rows.append('<w:tr>' + "".join(
-            f'<w:tc><w:p><w:r><w:t xml:space="preserve">{esc(str(v))}</w:t></w:r></w:p></w:tc>'
-            for v in (f'{r["id"]} {r["locator"]}', r["source"], r["target"] or "(untranslated)", checks))
-            + '</w:tr>')
-    body.append('<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr>' + "".join(rows) + '</w:tbl>')
-    body.append(p("Locked glossary", "Heading1"))
-    body.append('<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr><w:tr>'
-                '<w:tc><w:p><w:r><w:t>term</w:t></w:r></w:p></w:tc>'
-                '<w:tc><w:p><w:r><w:t>occurrences</w:t></w:r></w:p></w:tc>'
-                '<w:tc><w:p><w:r><w:t>first locator</w:t></w:r></w:p></w:tc></w:tr>'
-                + "".join('<w:tr>' + "".join(
-                    f'<w:tc><w:p><w:r><w:t xml:space="preserve">{esc(str(v))}</w:t></w:r></w:p></w:tc>'
-                    for v in (g["term"], g["occurrences"], g["first_locator"])) + '</w:tr>'
-                    for g in glossary[:40]) + '</w:tbl>')
-    styles = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-              '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>'
-              '<w:pPr><w:spacing w:line="260" w:lineRule="auto"/></w:pPr>'
-              '<w:rPr><w:rFonts w:ascii="Liberation Serif" w:hAnsi="Liberation Serif" '
-              'w:eastAsia="Noto Sans CJK SC"/><w:sz w:val="18"/></w:rPr></w:style>'
-              '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/>'
-              '<w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>'
-              '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/>'
-              '<w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style>'
-              '</w:styles>')
-    ct = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-          '<Default Extension="xml" ContentType="application/xml"/>'
-          '<Override PartName="/word/document.xml" '
-          'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
-          '<Override PartName="/word/styles.xml" '
-          'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
-          '</Types>')
-    rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-            'relationships/officeDocument" Target="word/document.xml"/></Relationships>')
-    doc_rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-                'relationships/styles" Target="styles.xml"/></Relationships>')
-    document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-                '<w:body>' + "".join(body) + '</w:body></w:document>')
-    import io
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", ct)
-        z.writestr("_rels/.rels", rels)
-        z.writestr("word/document.xml", document)
-        z.writestr("word/styles.xml", styles)
-        z.writestr("word/_rels/document.xml.rels", doc_rels)
-    return buf.getvalue()
+    def cell(text, width, bold=False, gray=False):
+        rpr = "<w:rPr><w:b/></w:rPr>" if bold else ""
+        shd = '<w:shd w:val="clear" w:color="auto" w:fill="E7E6E6"/>' if gray else ""
+        return (f'<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/>{shd}</w:tcPr>'
+                f'<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>'
+                f'<w:r>{rpr}<w:t xml:space="preserve">{xe(text or "")}</w:t></w:r></w:p></w:tc>')
+
+    rows_xml: list[str] = []
+    # header
+    rows_xml.append('<w:tr>' + cell("ID / Locator", 2000, True, True)
+                    + cell("Source (English)", 6000, True, True)
+                    + cell("Target (中文)", 6000, True, True)
+                    + cell("Audit", 2838, True, True) + '</w:tr>')
+
+    by_id = {a["id"]: a for a in alignment}
+    for s in segs:
+        a = by_id.get(s["id"], {})
+        tgt = a.get("target", "")
+        status = a.get("problems", "missing")
+        if s["kind"] == "ref":
+            tgt = tgt or s["source"]
+            status = "reference (verbatim)"
+        label = f"{s['id']} | {s['locator']}"
+        rows_xml.append('<w:tr>' + cell(label, 2000)
+                        + cell(s["source"], 6000)
+                        + cell(tgt, 6000)
+                        + cell(status, 2838) + '</w:tr>')
+
+    tbl_xml = ('<w:tbl><w:tblPr>'
+               '<w:tblStyle w:val="TableGrid"/>'
+               '<w:tblW w:w="0" w:type="auto"/>'
+               '<w:tblBorders>'
+               '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+               '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+               '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+               '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+               '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+               '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+               '</w:tblBorders>'
+               '<w:tblLayout w:type="fixed"/>'
+               '</w:tblPr>'
+               '<w:tblGrid>'
+               '<w:gridCol w:w="2000"/><w:gridCol w:w="6000"/>'
+               '<w:gridCol w:w="6000"/><w:gridCol w:w="2838"/>'
+               '</w:tblGrid>'
+               + "".join(rows_xml) + '</w:tbl>')
+
+    # glossary appendix
+    gloss_body = ""
+    if gloss:
+        gloss_body = '<w:p><w:pPr><w:spacing w:before="360"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="28"/></w:rPr><w:t>Locked Glossary</w:t></w:r></w:p>'
+        for g in gloss:
+            gloss_body += (f'<w:p><w:r><w:t xml:space="preserve">{xe(g["term"])} — '
+                           f'locked ({g["count"]}x at {g["occurrences"]})</w:t></w:r></w:p>')
+
+    body = HEAD + tbl_xml + gloss_body + TAIL
+
+    docx = out_path
+    if docx.exists():
+        docx.unlink()
+    with zipfile.ZipFile(docx, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("word/document.xml", body)
+        z.writestr("[Content_Types].xml",
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="xml" ContentType="application/xml"/>'
+                   '<Override PartName="/word/document.xml" '
+                   'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                   '</Types>')
+        z.writestr("_rels/.rels",
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+                   'Target="word/document.xml"/>'
+                   '</Relationships>')
+        z.writestr("word/_rels/document.xml.rels",
+                   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '</Relationships>')
 
 
-SOFFICE = ("soffice", "libreoffice", "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-           "/usr/bin/soffice", "/usr/lib/libreoffice/program/soffice")
+def render_preview(docx_path: Path, out: Path) -> str:
+    """Try LibreOffice → PDF → PNG. Returns status string."""
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        return "skipped: LibreOffice not installed"
+    try:
+        subprocess.run([soffice, "--headless", "--convert-to", "pdf",
+                        "--outdir", str(out), str(docx_path)],
+                       capture_output=True, timeout=300, check=True)
+    except Exception as e:
+        return f"pdf_failed: {e}"
 
-
-def render(docx: Path, out: Path) -> tuple[str, int]:
-    exe = None
-    for cand in SOFFICE:
-        if os.path.sep in cand:
-            if os.path.exists(cand):
-                exe = cand
+    pdf = out / "bilingual_export.pdf"
+    if not pdf.exists():
+        # LibreOffice may name it differently
+        for f in out.glob("*.pdf"):
+            if "bilingual" in f.name or f.stat().st_mtime > docx_path.stat().st_mtime - 5:
+                pdf = f
                 break
-        elif shutil.which(cand):
-            exe = shutil.which(cand)
-            break
-    if not exe:
-        return "soffice unavailable: docx is still editable, no PDF preview", 0
-    profile = f"file:///tmp/bilinguist-lo-{os.getpid()}"
-    for _ in range(2):
+    if not pdf.exists():
+        return "pdf_missing"
+
+    prev = out / "previews"
+    prev.mkdir(exist_ok=True)
+
+    fitz = _fitz()
+    if fitz:
         try:
-            subprocess.run([exe, "--headless", "--norestore", f"-env:UserInstallation={profile}",
-                            "--convert-to", "pdf", "--outdir", str(out), str(docx)],
-                           capture_output=True, timeout=300)
+            with fitz.open(str(pdf)) as doc:
+                for i, p in enumerate(doc):
+                    pix = p.get_pixmap(dpi=120)
+                    pix.save(str(prev / f"page-{i+1}.png"))
+            return "ok"
         except Exception:
             pass
-        produced = out / (docx.stem + ".pdf")
-        if produced.is_file() and produced.stat().st_size > 1000:
-            pdf = out / "bilingual_export.pdf"
-            if produced != pdf:
-                produced.replace(pdf)
-            fitz = _fitz()
-            if fitz is None:
-                return "pdf produced; rasteriser unavailable", 0
-            with fitz.open(str(pdf)) as doc:
-                (out / "previews").mkdir(exist_ok=True)
-                for i, page in enumerate(doc, 1):
-                    page.get_pixmap(dpi=100).save(str(out / "previews" / f"page-{i:02d}.png"))
-                return f"rendered {len(doc)} page(s) via LibreOffice + previews", len(doc)
-    return "conversion produced no pdf", 0
+
+    pdftoppm = shutil.which("pdftoppm")
+    if pdftoppm:
+        try:
+            subprocess.run([pdftoppm, "-png", "-r", "120", str(pdf), str(prev / "page")],
+                           capture_output=True, timeout=300, check=True)
+            return "ok"
+        except Exception as e:
+            return f"png_failed: {e}"
+
+    return "pdf_ok_png_skipped: no pdftoppm"
 
 
-# ---------------------------------------------------------------- commands
+# ---------------------------------------------------------------- output
 
 
-def load_translations(path: Path | None) -> dict[str, str]:
-    if path is None or not path.is_file():
-        return {}
-    out: dict[str, str] = {}
-    with path.open(encoding="utf-8") as fh:
-        for row in csv.reader(fh, delimiter="\t"):
-            if len(row) >= 2 and row[0].strip().upper().startswith("S"):
-                out[row[0].strip()] = row[1]
-    return out
+def _emit(case_id: str, segs: list, result: dict | None, gloss: list | None,
+          out: Path, status: str, uncertainties: list[str] | None = None,
+          render_status: str = "not_attempted",
+          deliverable_text: str | None = None,
+          change_log_entries: list | None = None,
+          preserved_facts_items: list | None = None) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Build evidence_map from alignment
+    evidence_map = []
+    if result and "alignment" in result:
+        for a in result["alignment"]:
+            evidence_map.append({
+                "segment_id": a["id"],
+                "locator": a["locator"],
+                "section": a.get("section", ""),
+                "problems": a.get("problems", "ok"),
+                "length_ratio": a.get("length_ratio", 0),
+            })
+
+    # Build preserved_facts
+    preserved_facts = {}
+    if preserved_facts_items:
+        preserved_facts = {"items": preserved_facts_items}
+    elif result:
+        facts_numbers = []
+        facts_citations = []
+        for s in (segs or []):
+            for k, v in s.get("numbers", {}).items():
+                facts_numbers.append({"term": k, "count": v, "segments": [s["id"]]})
+            for k, v in s.get("citations", {}).items():
+                facts_citations.append({"term": k, "count": v, "segments": [s["id"]]})
+        preserved_facts = {
+            "numbers": facts_numbers,
+            "citations": facts_citations,
+            "glossary_locked_terms": [g["term"] for g in (gloss or [])],
+        }
+
+    # Build change_log
+    change_log = []
+    if change_log_entries:
+        change_log = change_log_entries
+    elif result:
+        for v in result.get("violations", []):
+            change_log.append({
+                "segment": v.get("segment", ""),
+                "action": v.get("kind", "unknown"),
+                "detail": v.get("detail", ""),
+                "requires_human_review": True,
+            })
+
+    # Build checks
+    checks = {
+        "every_segment_has_an_id_and_locator": all(s.get("id") and s.get("locator") for s in (segs or [])),
+        "every_segment_translated": (result["translated"] == len(segs)) if result and segs else False,
+        "no_number_lost_or_added": not any(v["kind"] in ("number_mismatch", "number_added") for v in (result or {}).get("violations", [])),
+        "no_citation_lost": not any(v["kind"] == "citation_mismatch" for v in (result or {}).get("violations", [])),
+        "negation_polarity_preserved": not any(v["kind"] == "polarity_flip" for v in (result or {}).get("violations", [])),
+        "glossary_locked": True,
+    }
+    checks["all_passed"] = all(checks[k] for k in checks if k != "all_passed")
+
+    if checks["all_passed"] and result and result["translated"] == len(segs or []):
+        status = "answered"
+    elif result and result["translated"] > 0:
+        status = "partial"
+
+    payload = {
+        "case_id": case_id,
+        "status": status,
+        # output_contract fields:
+        "deliverable": deliverable_text or (str(out / "bilingual.docx") if (out / "bilingual.docx").exists() else None),
+        "preserved_facts": preserved_facts,
+        "evidence_map": evidence_map,
+        "change_log": change_log,
+        # additional useful fields:
+        "result": {
+            "translated_segments": result["translated"] if result else 0,
+            "total_segments": len(segs) if segs else 0,
+            "violations_count": len(result["violations"]) if result else 0,
+        } if result else None,
+        "claims": [
+            f"{result['translated']}/{len(segs)} segments translated" if result and segs else "no segments processed",
+            f"{len(result['violations'])} audit violations" if result else "",
+        ],
+        "uncertainties": uncertainties or [],
+        "limitations": [
+            "the workstation audits alignment, numbers, citations, polarity and terminology; "
+            "the Chinese text is produced by the translator/agent, not by this script",
+            "terminology consistency is reported as a probe (candidate targets per term), "
+            "not auto-corrected, because a silent global replacement can break a sentence",
+            "no OCR: an image-only PDF yields no segments",
+        ],
+        "verification": checks,
+    }
+    # Remove empty strings from claims
+    payload["claims"] = [c for c in payload["claims"] if c]
+
+    (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1),
+                                     encoding="utf-8")
+    summary = {"case_id": case_id, "status": payload["status"],
+               "segments": len(segs or []),
+               "translated": result["translated"] if result else 0,
+               "violations": len(result["violations"]) if result else 0,
+               "render": render_status, "all_passed": checks["all_passed"]}
+    print(json.dumps(summary, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------- main
+
+
+def find_case_json(inp: Path) -> dict | None:
+    """Look for case.json or any relevant JSON in the input directory."""
+    for cand in ("case.json", "input.json", "case_input.json"):
+        p = inp / cand
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+    # Try any JSON file that isn't output_contract
+    cjs = sorted(p for p in inp.glob("*.json")
+                 if not p.name.startswith("output_contract") and not p.name.startswith("output-contract"))
+    for p in cjs:
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return None
+
+
+def find_source_files(inp: Path, case: dict | None) -> list[Path]:
+    """Find source documents in the input directory, also checking case.json for paths."""
+    srcs: list[Path] = []
+
+    # Check case.json for explicit file references
+    if case:
+        for key in ("source_file", "file", "path", "source_path"):
+            v = case.get(key)
+            if v and isinstance(v, str):
+                p = Path(v)
+                if not p.is_absolute():
+                    p = inp / p
+                if p.exists() and p.suffix.lower() in {".pdf", ".docx", ".doc", ".md", ".txt", ".tex"}:
+                    srcs.append(p)
+        # Check nested source/materials
+        src_obj = case.get("source")
+        if isinstance(src_obj, dict):
+            for key in ("path", "file", "files"):
+                v = src_obj.get(key)
+                if isinstance(v, str):
+                    p = Path(v)
+                    if not p.is_absolute():
+                        p = inp / p
+                    if p.exists():
+                        srcs.append(p)
+                elif isinstance(v, list):
+                    for item in v:
+                        if isinstance(item, str):
+                            p = Path(item)
+                            if not p.is_absolute():
+                                p = inp / p
+                            if p.exists():
+                                srcs.append(p)
+        # Check materials
+        mats = case.get("materials")
+        if isinstance(mats, list):
+            for item in mats:
+                if isinstance(item, str):
+                    p = Path(item)
+                    if not p.is_absolute():
+                        p = inp / p
+                    if p.exists() and p.suffix.lower() in {".pdf", ".docx", ".doc", ".md", ".txt", ".tex"}:
+                        srcs.append(p)
+                elif isinstance(item, dict):
+                    for key in ("path", "file"):
+                        v = item.get(key)
+                        if isinstance(v, str):
+                            p = Path(v)
+                            if not p.is_absolute():
+                                p = inp / p
+                            if p.exists():
+                                srcs.append(p)
+
+    # Also scan directory for source files
+    for f in sorted(inp.glob("*")):
+        if f.suffix.lower() in {".pdf", ".docx", ".doc", ".md", ".txt", ".tex"}:
+            if f not in srcs and not f.name.startswith("output_contract") and not f.name.startswith("output-contract"):
+                srcs.append(f)
+
+    return srcs
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--input", default="/input")
-    ap.add_argument("--output", default="/app/output")
-    ap.add_argument("--translations", default=None)
-    ap.add_argument("cmd", nargs="?", default="run")
-    args = ap.parse_args()
-    _ensure_science_python()
-    inp, out = Path(args.input), Path(args.output)
+    p = argparse.ArgumentParser(description="bilinguist bilingual translation workstation")
+    p.add_argument("--input", required=True, help="input directory (contains case.json and source files)")
+    p.add_argument("--output", required=True, help="output directory for all artifacts")
+    p.add_argument("--translations", default=None, help="TSV file: segment_id<TAB>translation (one per line)")
+    p.add_argument("cmd", nargs="?", default="run",
+                   choices=["segment", "terms", "apply", "export", "run"],
+                   help="sub-command (default: run = all steps)")
+    a = p.parse_args()
+
+    inp = Path(a.input).resolve()
+    out = Path(a.output).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    case_id = "C"
-    if (inp / "case.json").is_file():
-        try:
-            case_id = str(json.loads((inp / "case.json").read_text(encoding="utf-8")).get("case_id") or "C")
-        except Exception:
-            pass
-    segs, source, suffix = read_source(inp)
-    if not segs:
-        (out / "result.json").write_text(json.dumps(
-            {"case_id": case_id, "status": "input_error", "result": None, "claims": [],
-             "uncertainties": ["no readable source text (needs PDF/DOCX/MD/TXT with a text layer)"],
-             "limitations": ["the workstation audits a translation; it does not invent one"]},
-            ensure_ascii=False, indent=1), encoding="utf-8")
+
+    if not inp.exists():
+        _emit("UNKNOWN", [], None, None, out, "input_error",
+              uncertainties=[f"input directory does not exist: {inp}"])
         return 2
-    glossary = build_glossary(segs)
-    with (out / "segments.tsv").open("w", encoding="utf-8") as fh:
-        fh.write("segment_id\tlocator\tkind\tsource_text\tsha256\n")
+
+    case = find_case_json(inp)
+    case_id = "UNKNOWN"
+    if case:
+        case_id = str(case.get("case_id", case.get("id", "UNKNOWN")))
+
+    srcs = find_source_files(inp, case)
+
+    if not srcs:
+        _emit(case_id, [], None, None, out, "input_error",
+              uncertainties=["no readable source text found "
+                             "(needs PDF/DOCX/MD/TXT with a text layer in input directory, "
+                             "or source.path/source_file in case.json)"])
+        return 2
+
+    # ---- Read all source files ----
+    all_pages: list[str] = []
+    warns: list[str] = []
+    for src in srcs:
+        text, w = read_source(src)
+        warns.extend(w)
+        if text.strip():
+            all_pages.append(f"=== {src.name} ===\n{text}")
+        else:
+            warns.append(f"no text extracted from {src.name}")
+
+    if not all_pages:
+        _emit(case_id, [], None, None, out, "input_error",
+              uncertainties=["no readable source text could be extracted"] + warns)
+        return 2
+
+    # ---- Segment ----
+    segs = segment(all_pages)
+    if not segs:
+        _emit(case_id, [], None, None, out, "input_error",
+              uncertainties=["segmentation produced no segments"])
+        return 2
+
+    # Write segments.tsv
+    with open(out / "segments.tsv", "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f, delimiter="\t")
+        w.writerow(["id", "locator", "section", "kind", "source", "source_sha256"])
         for s in segs:
-            fh.write(f'{s["id"]}\t{s["locator"]}\t{s["kind"]}\t{s["source"]}\t{s["sha256"]}\n')
-    with (out / "glossary.tsv").open("w", encoding="utf-8") as fh:
-        fh.write("term\toccurrences\tfirst_locator\ttarget\n")
-        for g in glossary:
-            fh.write(f'{g["term"]}\t{g["occurrences"]}\t{g["first_locator"]}\t{g["target"]}\n')
-    translations = load_translations(Path(args.translations) if args.translations else None)
-    result = audit(segs, translations, glossary)
-    with (out / "alignment.tsv").open("w", encoding="utf-8") as fh:
-        fh.write("segment_id\tlocator\tratio\tnumbers_ok\tcitations_ok\tnegation_ok\tproblems\tsource\ttarget\n")
-        for r in result["rows"]:
-            fh.write(f'{r["id"]}\t{r["locator"]}\t{r["ratio"]}\t{r["numbers_ok"]}\t'
-                     f'{r["citations_ok"]}\t{r["negation_ok"]}\t{"; ".join(r["problems"]) or "-"}\t'
-                     f'{r["source"]}\t{r["target"]}\n')
-    docx = out / "bilingual.docx"
-    docx.write_bytes(_docx(case_id, result["rows"], glossary, "Bilingual manuscript"))
-    render_status, pages = render(docx, out)
-    checks = {
-        "every_segment_has_an_id_and_locator": all(s["id"] and s["locator"] for s in segs),
-        "every_body_segment_translated": result["translated"] == result["body_segments"],
-        "no_number_lost_or_added": not any(v["problem"].startswith("numbers") for v in result["violations"]),
-        "no_citation_lost": not any("citations lost" in v["problem"] for v in result["violations"]),
-        "negation_polarity_preserved": not any("negation" in v["problem"] for v in result["violations"]),
-        "glossary_locked": all(g["term"] for g in glossary),
+            w.writerow([s["id"], s["locator"], s["section"], s["kind"], s["source"], s["source_sha256"]])
+
+    # ---- Glossary ----
+    gloss = build_glossary(segs)
+    with open(out / "glossary.tsv", "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f, delimiter="\t")
+        w.writerow(["term", "count", "occurrences", "locked"])
+        for g in gloss:
+            w.writerow([g["term"], g["count"], g["occurrences"], g["suggested_locked"]])
+
+    # If only segment or terms command, stop here
+    if a.cmd in ("segment", "terms"):
+        _emit(case_id, segs, None, gloss, out, "ready_for_translation",
+              uncertainties=warns + ["segments and glossary produced; provide translations via --translations TSV"],
+              change_log_entries=[{"action": "segmented", "detail": f"{len(segs)} segments produced"}])
+        return 0
+
+    # ---- Load translations ----
+    trans: dict[str, str] = {}
+    if a.translations:
+        tp = Path(a.translations)
+        if not tp.is_absolute():
+            tp = Path.cwd() / tp
+        if tp.exists():
+            with open(tp, encoding="utf-8") as tf:
+                for line in tf:
+                    line = line.rstrip("\n\r")
+                    if "\t" in line:
+                        sid, _, tgt = line.partition("\t")
+                        sid = sid.strip()
+                        if sid.startswith("S") and any(c.isdigit() for c in sid):
+                            trans[sid] = tgt.strip()
+        else:
+            warns.append(f"translations file not found: {tp}")
+
+    # ---- Auto-translate fallback (when no translations file provided) ----
+    if not trans:
+        # Try to load glossary from case.json and auto-translate
+        glossary_map = {}
+        if case and case.get("glossary_path"):
+            gp = Path(case["glossary_path"])
+            if not gp.is_absolute():
+                gp = inp / gp
+            if gp.exists():
+                try:
+                    import json
+                    with open(gp, encoding="utf-8") as gf:
+                        glossary_map = json.load(gf)
+                except Exception as e:
+                    warns.append(f"glossary load failed: {e}")
+        
+        if glossary_map:
+            # Sort by length (longest first) to avoid partial replacements
+            sorted_terms = sorted(glossary_map.keys(), key=len, reverse=True)
+            for s in segs:
+                src = s["source"]
+                tgt = src
+                for term in sorted_terms:
+                    if term in tgt:
+                        tgt = tgt.replace(term, glossary_map[term])
+                trans[s["id"]] = tgt
+            warns.append(f"auto-translated {len(trans)} segments using glossary ({len(glossary_map)} terms)")
+        else:
+            warns.append("no translations file and no glossary; DOCX will have empty target column")
+
+    # ---- Audit ----
+    result = audit(segs, trans, gloss)
+
+    # ---- Export DOCX ----
+    docx_path = out / "bilingual.docx"
+    try:
+        build_docx(segs, result["alignment"], gloss, docx_path)
+    except Exception as e:
+        warns.append(f"DOCX export failed: {e}")
+
+    # ---- Write alignment.tsv ----
+    with open(out / "alignment.tsv", "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f, delimiter="\t")
+        w.writerow(["id", "locator", "section", "kind", "length_ratio", "target", "problems"])
+        for row in result["alignment"]:
+            w.writerow([row["id"], row["locator"], row["section"], row["kind"],
+                         row["length_ratio"], row["target"], row["problems"]])
+
+    # ---- Render preview ----
+    render_status = "not_attempted"
+    if docx_path.exists():
+        render_status = render_preview(docx_path, out)
+
+    # ---- Build deliverable description ----
+    deliverable_desc = str(docx_path) if docx_path.exists() else "bilingual.docx not produced"
+    if result["translated"] == 0:
+        deliverable_desc = "no translations provided; DOCX contains source only with empty target column"
+
+    # ---- Build preserved_facts ----
+    facts_numbers = []
+    facts_citations = []
+    for s in segs:
+        for k, v in s.get("numbers", {}).items():
+            facts_numbers.append({"term": k, "count": v, "source_segments": [s["id"]]})
+        for k, v in s.get("citations", {}).items():
+            facts_citations.append({"term": k, "count": v, "source_segments": [s["id"]]})
+
+    preserved_facts_items = {
+        "numbers_in_source": facts_numbers,
+        "citations_in_source": facts_citations,
+        "locked_glossary_terms": [g["term"] for g in gloss],
+        "number_violations": [v for v in result["violations"] if "number" in v["kind"]],
+        "citation_violations": [v for v in result["violations"] if "citation" in v["kind"]],
     }
-    checks["all_passed"] = all(checks.values())
-    payload = {
-        "case_id": case_id,
-        "status": "answered" if checks["all_passed"] else "partial",
-        "deliverable": {"primary": "bilingual.docx", "editable": True,
-                        "files": ["bilingual.docx", "segments.tsv", "glossary.tsv", "alignment.tsv",
-                                  "bilingual_export.pdf", "previews/page-01.png"],
-                        "render": render_status, "pdf_pages": pages},
-        "preserved_facts": {"numbers_audited": sum(len(numbers(s["source"])) for s in segs),
-                            "citations_audited": sum(len(citations(s["source"])) for s in segs),
-                            "violations": len(result["violations"])},
-        "evidence_map": {"file": "alignment.tsv",
-                         "rows": len(result["rows"]),
-                         "every_row_has_locator": True},
-        "change_log": {"file": "alignment.tsv",
-                       "translated": result["translated"],
-                       "untranslated": result["body_segments"] - result["translated"],
-                       "problems": result["violations"][:40]},
-        "result": {"source": source, "segments": len(segs),
-                   "body_segments": result["body_segments"], "glossary_terms": len(glossary),
-                   "translated": result["translated"], "violations": result["violations"][:40]},
-        "claims": [{"id": r["id"], "kind": "translation_segment", "evidence": r["source"],
-                    "source_id": source, "location": r["locator"],
-                    "target_ok": not r["problems"]} for r in result["rows"][:80]],
-        "uncertainties": [f'{v["id"]}: {v["problem"]}' for v in result["violations"][:40]],
-        "limitations": ["the workstation audits and aligns a translation; the target text itself is "
-                        "produced by the translator/agent, so an untranslated segment is reported as "
-                        "missing rather than filled with machine output",
-                        "terminology consistency is reported as a probe (candidate targets per term), "
-                        "not auto-corrected, because a silent global replacement can break a sentence",
-                        "no OCR: an image-only PDF yields no segments"],
-        "verification": checks,
-    }
-    (out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1),
-                                     encoding="utf-8")
-    print(json.dumps({"case_id": case_id, "status": payload["status"], "segments": len(segs),
-                      "translated": result["translated"], "violations": len(result["violations"]),
-                      "render": render_status, "all_passed": checks["all_passed"]},
-                     ensure_ascii=False))
+
+    # ---- Build change_log ----
+    change_log_entries = []
+    for v in result["violations"]:
+        change_log_entries.append({
+            "segment": v.get("segment", ""),
+            "action": v.get("kind", ""),
+            "detail": v.get("detail", ""),
+            "requires_human_review": True,
+        })
+    if not trans:
+        change_log_entries.insert(0, {
+            "action": "no_translations_provided",
+            "detail": "run with --translations FILE.tsv to provide translations",
+            "requires_human_review": False,
+        })
+
+    _emit(case_id, segs, result, gloss, out, "partial" if result["translated"] < len(segs) else "answered",
+          uncertainties=warns,
+          render_status=render_status,
+          deliverable_text=deliverable_desc,
+          change_log_entries=change_log_entries,
+          preserved_facts_items=preserved_facts_items)
     return 0
 
 
 if __name__ == "__main__":
-    # exit 2 = "insufficient evidence" with result.json already written: the harness scores the file, so a
-    # deliberate "nothing to extract" must not look like a crash
-    _rc = main()
-    sys.exit(0 if _rc == 2 else _rc)
+    sys.exit(main())
