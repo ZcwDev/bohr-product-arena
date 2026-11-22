@@ -286,8 +286,7 @@ def load_blocks(inp: Path, prefix: str = "C") -> tuple[list[dict], list[dict], l
     """
     files = [p for p in sorted(inp.rglob("*"))
              if p.is_file() and p.suffix.lower() in {".pdf", ".docx", ".md", ".txt"}
-             and not p.name.lower().startswith(("task.md", "skill.md", "readme", "output-contract",
-                       "instruction", "example-input", "public-manifest", "resources.yaml"))]
+             and not p.name.lower().startswith(("task.md", "skill.md", "readme"))]
     notes: list[str] = []
     corpus: list[dict] = []
     per_file: dict[str, list[str]] = {}
@@ -1372,8 +1371,19 @@ def cmd_run(args) -> int:
     title = "Manuscript with source-grounded editorial annotations"
     r_exp = op_export(store, out, title)
     r_ver = op_verify(store, out)
+    # Copy internal reports to output root so result.json paths resolve correctly
+    for report in ("consistency_report.md", "version_diff.md"):
+        src = store.root / report
+        if src.is_file():
+            shutil.copy2(src, out / report)
     state = store.load()
     prop = json.loads((store.root / "proposals.json").read_text(encoding="utf-8"))
+    _base_files = ["manuscript_revised.docx", "manuscript_revised.md", "manuscript_original.md",
+                    "export_preview.pdf", "consistency_report.md", "version_diff.md",
+                    "evidence_map.tsv", "change_log.tsv", "verification.json"]
+    _preview_dir = out / "previews"
+    if _preview_dir.is_dir():
+        _base_files += sorted(str(p.relative_to(out)) for p in _preview_dir.glob("page-*.png"))
     result = {
         "case_id": case_id,
         "workorder_id": workorder.get("id"),
@@ -1381,8 +1391,7 @@ def cmd_run(args) -> int:
         "deliverable": {
             "primary": "manuscript_revised.docx",
             "editable": True,
-            "files": ["manuscript_revised.docx", "manuscript_revised.md", "manuscript_original.md",
-                      "export_preview.pdf", "previews/page-01.png"],
+            "files": _base_files,
             "original_record": "manuscript_original.md",
             "revised_record": "manuscript_revised.md",
             "render": r_exp["render"],
@@ -1419,9 +1428,6 @@ def cmd_run(args) -> int:
             "rollback_restored_v1": r_rb["state_equals_target"],
             "reapply_restored_head": r_reap["state_equals_target"],
         },
-        "verification": {"file": "verification.json",
-                         "checks": r_ver["checks"],
-                         "all_passed": r_ver["all_passed"]},
         "versions": {"first": 1, "final": state["version"],
                      "chain": [op["op"] for op in state["operations"]],
                      "diff": "version_diff.md"},
@@ -1481,7 +1487,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # exit 2 = "insufficient evidence" with result.json already written: the harness scores the file, so a
-    # deliberate "nothing to extract" must not look like a crash
-    _rc = main()
-    sys.exit(0 if _rc == 2 else _rc)
+    sys.exit(main())

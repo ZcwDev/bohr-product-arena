@@ -13,16 +13,18 @@ python3 /skills/weekly-skill/scripts/revflow.py --work /app/work/revflow run --i
 
 - 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件，就表示本次案例完成（不要叫 results.json / output.json）；把该命令打印的 JSON 当作结论。
 - 如果本机没有 `/input`（例如工作区里是 `inputs/`），就用工作目录里的 `inputs` 与 `out` 替换路径；**不要自造案例、不要另建 portability/selftest 目录**。
-- 收工前清理输出目录：**只允许 `result.json` 与 skill 产出的交付物**；任何 `edge-test*`、`portability*`、`example-run`、`selftest*` 目录都要删掉——评测方会把这些当成自造案例，直接判 0。
-- `result.json.case_id` 必须与 `/input/case.json` 里的 `case_id` **逐字一致**，不得自行编号（T01/demo 之类一律判 0）。
-- 如果 `/input` 的材料读不出来，就**如实报 `status: input_error`**；**绝对不要自造案例、不要用 /tmp 下的测试材料充数**。
-- **`case_id` 只能从 `/input/case.json` 逐字复制**；自己编号（T01 / TEST-SYNTH-001 / demo / caseA）一律判 0。
 - 只在这个命令**报错**时，才按下面的“失败处理”表逐条排查。
 - 每个案例都是同一行命令；多个案例就重复执行（输出目录按案例分开）。
 
 ---
 
 # revflow — the writing client
+
+```bash
+python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
+  --work /app/work/run
+```
+
 
 ## The client in one sentence
 
@@ -100,6 +102,52 @@ renderer without CJK glyphs cannot silently drop text.
 | PDF without a text layer | all targets `unresolved`; the run still reports what it read |
 | LibreOffice missing | built-in text PDF preview, substitution named in `result.json` |
 | damaged/invalid operations | typed `RevFlowError` subclasses with `code` and HTTP-like status; state untouched |
+
+## Runbook
+
+### Expected outputs
+
+Every successful run produces:
+
+| File | Purpose |
+|------|---------|
+| `result.json` | Structured output with all `output_contract` fields |
+| `manuscript_revised.docx` | Editable revised manuscript |
+| `manuscript_revised.md` | Revised manuscript with block ids |
+| `manuscript_original.md` | Original manuscript frozen verbatim |
+| `export_preview.pdf` | Rendered PDF preview (LibreOffice or fallback) |
+| `previews/page-*.png` | Per-page PNG screenshots |
+| `evidence_map.tsv` | Annotation → source locator mapping |
+| `change_log.tsv` | Per-change accept/reject decisions |
+| `version_diff.md` | Version diff with annotation text |
+| `consistency_report.md` | Terminology/numeric scan |
+| `verification.json` | Post-export integrity checks |
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Exit code 2 | No readable manuscript found | Check `/input` has PDF/DOCX/MD/TXT with extractable text |
+| `status: failed` in result.json | Material unreadable or missing | Verify input files exist and are not encrypted |
+| LibreOffice warnings | `soffice` not in PATH | Fallback text-PDF renderer used automatically; noted in result |
+| `ModuleNotFoundError: docx` | Missing `python-docx` | Install: `pip install python-docx` (or use harness with preinstalled deps) |
+| `ModuleNotFoundError: pdfplumber` | Missing `pdfplumber` | Install: `pip install pdfplumber` |
+| Permission denied on `/app/work` | Sandbox restriction | Use `--work /tmp/revflow-work` instead |
+
+### Idempotency
+
+Repeated runs on the same input produce identical `result.json` content (receipt filenames
+contain hashes that may differ, but the structured fields are byte-identical). The `--fresh`
+flag clears the work store before each run.
+
+### Portability
+
+- No hardcoded paths; all paths are relative to `--input`, `--output`, `--work` arguments.
+- Works from any working directory.
+- Graceful degradation: missing optional input fields → `status: partial` with reason stated.
+- No network calls, no model calls; fully deterministic.
+
+---
 
 ## Limits
 
