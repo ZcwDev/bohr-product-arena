@@ -1,0 +1,17 @@
+{
+ "case_id": "DEMO-CASE-001",
+ "note": "由本 Skill 作者构造的合成演示材料，只用于演示接口与验证流水线，不是赛题案例，也不是任何真实研究的记录。其中所有数值都是为演示而假造的，不得引用。",
+ "task_instruction": "Write a short research-article results and methods section from the supplied material, Chinese target journal, Vancouver numbered citations.",
+ "genre": "research article",
+ "target_journal": "演示用中文期刊模板（非真实期刊）",
+ "audience": "同行研究者",
+ "word_limit": 2000,
+ "citation_style": "Vancouver",
+ "output_contract": {
+  "case_id": "原样保留",
+  "deliverable": "可编辑的目标文稿/结构化产物",
+  "preserved_facts": "数字、条件、术语和来源不可凭空改变",
+  "evidence_map": "关键论断到来源定位的映射",
+  "change_log": "修改动作、原因、人工确认项和未解决问题"
+ }
+}
