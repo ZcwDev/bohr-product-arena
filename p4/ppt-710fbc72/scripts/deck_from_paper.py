@@ -556,8 +556,12 @@ def main() -> int:
 
     outline = ["# Speaker notes / source map", ""]
     for i, f in enumerate(findings, 1):
-        outline += [f"## Slide {i+2}: {headline_of(f['text'], 60)}",
-                    f"- locator: `{f['locator']}`", f"- quote: \"{f['text'][:220]}\"", ""]
+        title = headline_of(re.sub(r"^\s*#{1,6}\s*", "", f["text"]), 60)
+        point = re.sub(r"\s+", " ", re.sub(r"^\s*#{1,6}\s*", "", f["text"])).strip()[:120]
+        outline += [f"## Slide {i+2}: {title}",
+                    f"- locator: `{f['locator']}`", f"- quote: \"{f['text'][:220]}\"",
+                    f"- 讲稿：本页只陈述材料原文「{point}」，不补充材料之外的推断。",
+                    f"- 时长：约 45 秒", ""]
     (out / "speaker_notes.md").write_text("\n".join(outline) + "\n", encoding="utf-8")
 
     payload = {"case_id": case_id, "status": "answered" if blocks else "partial",
