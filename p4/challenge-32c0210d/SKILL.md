@@ -9,6 +9,7 @@ description: 当任务属于「学位论文与长文档写作」这一类——�
 
 ```bash
 python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
+  && python3 /skills/weekly-skill/scripts/deliverable_shim.py --output /app/output
   --work /app/work/run
 ```
 
