@@ -1,0 +1,25 @@
+{
+ "case_id": "EXAMPLE-NOT-A-TEST-CASE",
+ "example_run": true,
+ "status": "partial",
+ "result": {
+  "example": "示例：结构化字段在此"
+ },
+ "claims": [
+  {
+   "kind": "example",
+   "evidence": {
+    "locator": "p1b1",
+    "quote": "示例引语"
+   },
+   "source_id": "synthetic-example",
+   "location": "p1b1"
+  }
+ ],
+ "uncertainties": [
+  "示例：真实案例的未报告项在此"
+ ],
+ "limitations": [
+  "示例文件，不含正式案例结果"
+ ]
+}

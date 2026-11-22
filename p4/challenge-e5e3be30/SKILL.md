@@ -1,114 +1,230 @@
 ---
-name: evidence-trace-and-claim-verification
-description: 把待核验的科研论断拆成可独立判定的子判断，为每条子判断定位最小充分证据（页码/区块/逐字引文），给出 supported / partially_supported / contradicted / insufficient_evidence 四级判定与理由；区分"主题相关"与"真正支持"，并列冲突与范围限制。当用户要求核验某句结论、检查引用是否支持论断、或输出证据卡片/核验报告时使用。
+name: weekly-skill
+description: 文献证据溯源与事实核验。对给定断言做证据核验时使用：先把复合断言拆成原子断言，保留比较对象、否定、显著性与适用条件，再对完整来源上下文逐条判定 entailment（supported / partially_supported / contradicted / insufficient_evidence），每条结论都回到材料的 p<页>b<块> 定位符。提供可执行的七步流程、契约校验器与引语核验器，用于按案例契约产出可机检的 result.json。
 ---
 
 ## 立刻执行（不要探索）
 
-这是一个**单命令** skill。评测里请**直接执行下面这一行**，不要读脚本、不要重新实现、不要先做仓库审计：
+单命令 skill。评测里请**直接执行下面这一行**，不要读脚本、不要重实现、不要先做仓库审计：
 
 ```bash
-python3 /skills/weekly-skill/scripts/verify_claims.py --input /input --output /app/output
+python3 /skills/weekly-skill/scripts/run.py --input /input --output /app/output \
+  --work /app/work/run
 ```
 
-- 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件，就表示本次案例完成（不要叫 results.json / output.json）；把该命令打印的 JSON 当作结论。
-- 如果本机没有 `/input`（例如工作区里是 `inputs/`），就用工作目录里的 `inputs` 与 `out` 替换路径；**不要自造案例、不要另建 portability/selftest 目录**。
-- 收工前清理输出目录：**只允许 `result.json` 与 skill 产出的交付物**；任何 `edge-test*`、`portability*`、`example-run`、`selftest*` 目录都要删掉——评测方会把这些当成自造案例，直接判 0。
-- `result.json.case_id` 必须与 `/input/case.json` 里的 `case_id` **逐字一致**，不得自行编号（T01/demo 之类一律判 0）。
-- 如果 `/input` 的材料读不出来，就**如实报 `status: input_error`**；**绝对不要自造案例、不要用 /tmp 下的测试材料充数**。
-- **`case_id` 只能从 `/input/case.json` 逐字复制**；自己编号（T01 / TEST-SYNTH-001 / demo / caseA）一律判 0。
-- 只在这个命令**报错**时，才按下面的“失败处理”表逐条排查。
-- 每个案例都是同一行命令；多个案例就重复执行（输出目录按案例分开）。
+- 退出码 0 且输出目录里出现**名字正好是 `result.json`** 的文件即完成（不要叫 results.json）。
+- **`case_id` 只能从 `/input/case.json` 逐字复制**；自编号一律判 0。
+- 没有 `/input` 时用 `inputs/` 与 `out/`；**不要自造案例**；收工前删 `edge-test*`/`portability*`/`example-run`。
+- `run.py` 支持 `--authoring <file>` 传入人工/模型写好的补充内容；没有该文件时只用材料里的事实。
 
----
 
-# 文献证据溯源与事实核验
+# 文献证据溯源与事实核验｜每周技能（weekly-skill）
 
-给定一批**待核验的论断**（它们是待检验的问题，不是权威事实）和对应文献，产出**可复核的证据卡片**：
-论断 → 子判断 → 最小充分证据（逐字引文 + 定位符）→ 四级判定 → 理由。
+本 Skill 面向「文献证据溯源与事实核验」这一类任务：对给定断言做证据核验——先拆复合断言，
+再逐原子断言判 entailment（supported / partially_supported / contradicted / insufficient_evidence），
+保留比较对象、否定、显著性与条件；未被实验反驳 ≠ 被推翻。
 
-## 何时用
+它交付的是**可执行的流程 + 可机检的检查器**，不是一段提示词。所有判断都能回到材料里的定位符，
+所有检查都能用命令复跑。
 
-- "这句结论文献支持吗 / 这个引用支持这段论述吗"
-- "帮我核验 C1..Cn，给出证据位置和判定"
-- 需要批量产出证据卡片、引用核查清单、冲突提示时
 
-不适用：只需要文献综述、翻译或摘要（那不是核验），或材料根本没有原文可定位时（应直接报 `insufficient_evidence`）。
-
-## 一次运行
+## 0. 第一步永远是读案例契约（不要跳过）
 
 ```bash
-# 评测环境里 Skill 装在 /skills/weekly-skill；本地自测把 --input/--output 指到自己的目录
+# 本 Skill 在评测环境里的安装位置（找不到就全局搜一下）
 SKILL_DIR=${SKILL_DIR:-/skills/weekly-skill}
-python3 "$SKILL_DIR/scripts/verify_claims.py" --input /input --output /app/output
+if [ ! -f "$SKILL_DIR/SKILL.md" ]; then
+  SKILL_DIR=$(dirname "$(find / -name SKILL.md -not -path '*/node_modules/*' 2>/dev/null | grep -i week | head -1)")
+fi
+echo "SKILL_DIR=$SKILL_DIR"; ls "$SKILL_DIR"
+ls -la /input/ 2>/dev/null; ls -la /app/work 2>/dev/null
+python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path("/input/case.json")
+print(p.read_text(encoding="utf-8")[:4000] if p.is_file() else "no /input/case.json")
+PY
 ```
 
-输入（读取真实文件，不要凭标签假设内容）：
+- `case_id` 必须**逐字**复制到结果里；缺失就直接报 `input_error`，不要猜。
+- 案例契约里出现的字段名、枚举值（如 `answered|partial|insufficient_evidence|input_error`）**优先于**本 Skill 自己的措辞。
+- 材料路径以实际 `ls` 结果为准；题面提到的文件名可能不存在。
 
-| 路径 | 内容 |
+只要上面任何一步对不上，**先按题面修正契约再干活**。
+
+
+## 1. 本 Skill 做什么
+
+对给定断言做证据核验：先拆复合断言，再逐原子断言判 entailment（supported / partially_supported / contradicted / insufficient_evidence），保留比较对象、否定、显著性与条件；未被实验反驳 ≠ 被推翻。
+
+
+## 2. 输出契约（reading 家族）
+
+`/app/output/result.json`（同时镜像一份到 `/app/outputs/result.json`）：
+
+| 字段 | 要求 |
 |---|---|
-| `/input/claims-to-verify.json` | `[{"claim_id": "...", "claim": "..."}]`，必须读取，不能自带预制答案 |
-| `/input/case.json` | 可选，含 `case_id`；必须逐字复制到结果里 |
-| `/input/**/*.pdf|txt|md` | 原始文献（评测时是真实论文 PDF，没有预抽取的答案层） |
+| `case_id` | 原样保留案例给的 id |
+| `status` | `answered` / `partial` / `insufficient_evidence` / `input_error` |
+| `result` | 题目主结果：结构化字段，按键取值 |
+| `claims` | 列表，每条含 `kind`、`evidence`（`{locator, quote}`）、`source_id`、`location` |
+| `uncertainties` | 未报告、无法判断、材料冲突、需要人工复核的项 |
 
-输出（`/app/output/`）：
+非 `answered` 时必须写 `limitations`：缺什么、影响哪一部分、人工从哪里接管。
 
-| 文件 | 内容 |
+
+## 2.5 时间与请求预算（先保交付，再谈完美）
+
+评测侧的硬约束：**64 次模型请求、900 秒、单次回答 16384 tokens**。本 Skill 的流程按这个预算设计：
+
+| 阶段 | 目标预算 | 必须落盘的东西 |
+|---|---|---|
+| 读契约 + 建索引 | ≤ 5% | `/app/work/blocks.json`（或等价中间表示） |
+| 抽取 / 生成 / 修改 | ≤ 55% | `/app/work/` 下的中间产物 |
+| **第一版完整结果** | **≤ 70%（≈ 10 分钟内）** | **`/app/output/result.json`（契约字段齐全，允许字段值为 `partial`）** |
+| 校对与补漏 | 剩余 | 覆盖写 `result.json`，保留 `change_log`/`uncertainties` 的增量 |
+
+规则：
+
+1. **先写一版能过 `contract.py check` 的结果**，再改进。不允许把「还在读材料」当成完成态。
+2. 每次覆盖 `result.json` 前先备份到 `/app/work/result.prev.json`，这样任何时刻磁盘上都有一份可用结果。
+3. 值不值得再花一次请求，用这个判据：*这次调用能不能让某个字段从 `not_reported`/`partial` 变成有据可查的值？*
+   不能就停手，把剩余时间用于写 `uncertainties` 与 `limitations`。
+4. 大材料不要整篇塞进上下文：先建索引（定位符），只取与当前字段相关的块。
+5. 宁可交一份「小但每条都能核验」的结果，也不要交一份「全但一半没定位符」的结果——
+   评审按**可核验性**扣分，缺项只要如实标注就不算错。
+
+## 3. 工作流程
+
+1. 读 `/input/claims-to-verify.json`，把每条断言登记 `claim_id`；断言是**待核验问题**，不是事实。
+2. 用 `evidence.py split` 拆成原子断言，记录每原子的否定词、比较对象、显著性、适用条件（体系/剂量/时间点/人群）。
+3. 对每原子断言定位候选来源（`evidence.py locate`），并读完整上下文（必要时读该段前后块与所在小节），不做片段拼接。
+4. 判定：全部原子被同一来源逐字支持且条件一致 → `supported`；部分原子/条件不同/只在更弱限定下成立 → `partially_supported`；来源给出相反表述 → `contradicted`；材料未涉及或证据不足 → `insufficient_evidence`。
+5. 边界规则：材料只是“没做这个实验”不能写成 `contradicted`，要写 `insufficient_evidence` 并说明是外推。
+6. 多来源冲突：给出两处定位符 + 限定性判定（例如“在 A 体系成立、B 体系相反”），不要选边。
+7. 输出 `result.json`（reading 契约），每条断言一个 verdict + evidence 列表 + reason。
+
+每一步的中间产物都写到 `/app/work/`，最后一步才组装 `/app/output/result.json`；
+中途被截断时，`/app/output/` 里必须已经有一份能过契约校验的部分结果。
+
+## 4. 证据与诚实性规则（所有产出通用）
+
+- 每条结论、每个字段都挂定位符：PDF 用 `p<页>b<块>`（由 `pdf_text.py` 生成），文本用段落/行号，代码用 `文件:行号`。
+- 定位符只能来自**真的读过**的文件。没有读到的内容不许写：未报告写 `not_reported`，无法判断写 `unable`，
+  材料冲突写 `conflict` 并给出两处原文。
+- **缺失不是 0，不是默认值，不是常识补齐。** 单位缺失就不要补单位，n 没写就不要写 n。
+- 字面命中不等于语义正确：引用到一句话之前，先确认这句话真的在陈述你要的结论（主谓宾、否定词、条件从句都要看）。
+- 只读片段不够时读整段、整节、前后页；跨页续表先合并再取值。
+- 先落一份**诚实的部分结果**（哪怕只有几项），再增量改进；不要把「能读通」当成「已核对」。
+
+
+## 5. 异常与降级
+
+| 情况 | 处置 |
 |---|---|
-| `result.json` | `case_id` / `status` / `result.verdicts[]` / `sources` / `uncertainties` / `limitations` / `change_log` |
-| `evidence_cards.md` | 人类可读的证据卡片（断言 → 子判断 → 判定 → 引文与定位） |
-| `evidence_cards.tsv` | 机读表：claim_id / atom / verdict / locator / quote |
-| `SELFCHECK.json` | 自检：引文是否逐字回原文、枚举是否合法、断言是否全覆盖 |
+| 扫描件/无文字层 | 记录 `no_text_layer`，报告可读页与不可读页；不要用模型记忆补正文 |
+| 加密/权限受限 | 记录 `encrypted`，尝试 `qpdf --decrypt` 后再解析，仍失败如实报 `unable` |
+| 图片型表格 | `pdf_text.py tables` 返回空后标注 `image_table`，不要手造行 |
+| 乱码字体/私有编码 | 标注 `garbled_font`，给页码与原始字节片段，不猜字 |
+| 页眉页脚混进正文 | 由工具标为 `furniture` 并排除，抽查 3 页确认 |
+| 缺 office/matplotlib 等依赖 | 用本 Skill 的无依赖回退路径（`ooxml.py`、`figure.py` 的 SVG 兜底、`preview.py`），并在 `exceptions` 写明用的是哪条路径 |
+| 材料与标签不符 | 以文件内容为准，在 `limitations` 写明标签与内容的差异 |
 
-`status` 取值：`answered`（材料可读且全部断言有判定）/ `partial`（部分断言因材料问题无法判定）/
-`input_error`（输入缺失或不可解析，此时不编造判定）。
 
-## 四级判定（定义必须一致使用）
-
-| 判定 | 含义 |
-|---|---|
-| `supported` | 证据句在**相同条件**（同一对象/对照/剂量/时间窗/模型）下给出与断言一致的方向与显著性 |
-| `partially_supported` | 复合断言的子判断部分成立；或证据只覆盖断言的子集；或同一原子支持与否定并存 |
-| `contradicted` | 证据句明确给出与断言相反的方向（含 "no significant change"、"did not"、"failed to" 等） |
-| `insufficient_evidence` | 只有主题相关的段落、没有可判定方向的句子；或人群/模型范围不匹配（如动物实验外推人群）；或材料不可读 |
-
-**主题相关 ≠ 支持**：这一点是本题的核心，宁可判 `insufficient_evidence`，也不要把"提到同一个分子/同一种肿瘤"当成支持。
-
-## 方法（脚本里逐条实现）
-
-1. **拆解**：按 `and` / 分号 / 并列动词把复合断言拆成原子，记录每个原子的类型（事实 / 比较 / 因果 / 范围），
-   并保留对照、否定、显著性、限定条件。
-2. **定位**：把材料切成"页-区块"块，块带定位符 `p{页}b{块}` 与来源文件名；PDF 用 PyMuPDF 取文本层，
-   取不到就退回 `pdftotext`，都失败则记为不可读（不猜内容）。
-3. **检索**：按实词重叠 + 显著性线索 + 数字命中给块打分，取前 3 块，低于阈值视为无证据。
-4. **判定**：句级判定，且**必须命中同一效应词干**（reduce/decrease/abolish/inhibit…）才算涉及该原子——
-   否则 "did not abolish tumour growth" 会被误当成 "reduced tumour volume" 的反证。
-   否定线索 → `contradicted`；支持与否定并存 → `partially_supported`；人群范围不匹配 → `insufficient_evidence`。
-5. **汇总**：全部原子 supported → `supported`；全部 contradicted → `contradicted`；
-   混合或含证据不足 → `partially_supported`；全无证据 → `insufficient_evidence`。
-6. **自检**：每条引文都要能在提取文本里逐字重新找到（`SELFCHECK.json` 里 `quotes_not_found` 必须为空）；
-   否则删掉该证据并把该原子降级。
-
-## 异常与边界（必须照实写进 uncertainties / limitations）
-
-- PDF 无文本层 / 扫描件：`status=partial`，说明需要 OCR，**不要**凭标题补内容。
-- 图表里只有图注、正文未写数值：判 `insufficient_evidence` 并指出"数值仅见于图注/图内"。
-- 论断含多个子判断但只找到部分证据：给出 `partially_supported` 并列出缺哪一个子判断。
-- 两个来源互相冲突：两条引文都列（各自定位符），判定降级为 `partially_supported`，并在 `reason` 里写冲突点。
-- 引用转引（secondary citation）无法回到原文：记 `insufficient_evidence`，说明只找到转引。
-
-## 资源与依赖
-
-- `scripts/verify_claims.py`：本 Skill 唯一入口，纯标准库 +（可选）PyMuPDF；无 PyMuPDF 时自动退回 `pdftotext`。
-- 无网络依赖、无嵌入模型调用；不写作者私有路径；不在结果里写任何基准分数。
-
-## 最小调用示例（示例，不是正式案例结果）
-
-`example/` 下有一份 3 段示例文献与 4 条示例论断（`EXAMPLE-CASE-001`），演示四种判定各一条：
+## 6. 交付前自检（先跑命令，再改内容）
 
 ```bash
-python3 scripts/verify_claims.py --input example --output example-output
-# example-output/result.json -> C1 supported / C2 partially_supported / C3 contradicted / C4 insufficient_evidence
+# 1) 结果契约：字段齐不齐、枚举对不对
+python3 "$SKILL_DIR"/scripts/contract.py check /app/output/result.json --normalize
+
+# 2) 数字/单位有没有在改写中丢失或走形
+python3 "$SKILL_DIR"/scripts/text_checks.py numbers <原文> <产出> 2>/dev/null || true
+
+# 3) 引语是否真在材料里（把用到的引语写成 JSON 列表）
+python3 "$SKILL_DIR"/scripts/evidence.py verify <blocks.json> <quotes.json>
+
+# 4) 产物是否真的生成、能不能打开
+ls -la /app/output /app/outputs 2>/dev/null
 ```
 
-示例输出仅用于说明接口，**不得**当作正式案例答案。
+- `contract.py check` 的 `problems` 必须清空；`notes` 要逐条回应。
+- `text_checks.py`/`evidence.py` 报出的每一条都要么修掉、要么写进 `uncertainties` 并说明原因。
+- 声称存在的文件，`ls` 必须真的看得到。
+
+
+## 7. 依赖与资源
+
+- **必需**：Python 3.10+ 标准库。全部脚本在只有标准库时可运行。
+- **可选（有则更好，无则自动降级并在输出里说明）**：`pymupdf`/`pdfplumber`/`pypdf`（更细的抽取）、
+  `matplotlib`（数据图与保底预览）、`soffice`（office→PDF→PNG 预览）、`rsvg-convert`/`inkscape`（SVG 光栅化）、
+  `pdftoppm`/`mutool`/`gs`（PDF 光栅化）、`tesseract`（OCR）。
+- 安装（评测环境如可联网）：`pip3 install --break-system-packages pymupdf pdfplumber matplotlib`。
+- 脚本之间只通过文件和标准输入输出耦合；**调用时统一写成 `python3 "$SKILL_DIR"/scripts/<name>.py`**，
+  不要依赖当前工作目录。若某个脚本不存在（安装不完整），在 `exceptions` 里写明并用等价的手工步骤替代，
+  不要假装它跑过。
+- 文件数 ≤50、单文件 ≤500KB、总计 ≤2MB、无符号链接——本包已满足。
+
+
+## 8. 最小示例（示意，不是正式案例结果）
+
+```bash
+mkdir -p /app/work /app/output
+python3 "$SKILL_DIR"/scripts/pdf_text.py extract /app/work/example.pdf -o /app/work/blocks.json --jsonl /app/work/blocks.jsonl
+echo '[{"id":"c1","quote":"reached 42.5 mg/L after 24 h"}]' > /app/work/quotes.json
+python3 "$SKILL_DIR"/scripts/evidence.py locate /app/work/blocks.json "42.5 mg/L" --limit 3
+python3 "$SKILL_DIR"/scripts/evidence.py verify /app/work/blocks.json /app/work/quotes.json
+python3 "$SKILL_DIR"/scripts/contract.py stub --family reading -o /app/output/result.json
+```
+
+示意输出：`blocks.json` 里每个块带 `locator`（`p<页>b<块>`）与 `type`（body/caption/reference/furniture…）；
+`quotes.json` 的核验结果给出 `found`/`exact`/`locator`；`result.json` 按 reading 契约填好后
+`contract.py check` 输出空的 `problems`。**以上均为示例，不含正式案例结果。**
+
+
+## 9. 本包内的脚本
+
+`pdf_text.py`（带定位符的 PDF 抽取）、`evidence.py`（定位/引语核验/断言拆分）、`text_checks.py`（数字·术语·引用机械检查）、`contract.py`（结果契约校验）、`gain_report.py`（增益量化）
+
+
+## 10. 本题的正式接口（组织方修订版 v2，逐字保留）
+
+> Read the actual audit claims in /input/claims-to-verify.json. They are questions, not authoritative facts. Split compound claims and assess entailment against complete source context: supported, partially_supported, contradicted or insufficient_evidence. Preserve comparator, negation, significance and conditions. Unsupported extrapolation is not experimentally disproved; conflicting sources need both locations and a qualified verdict.
+
+上面这段是组织方给本题的接口修订；它的要求优先于本 Skill 的一般写法。
+
+
+## 10.5 用可测量的方式说明增益（不要只写「本 Skill 更好」）
+
+评分里有一项是「增益可验证性」。它要求对照，不要求形容词。本包提供 `gain_report.py`，
+它把「加载本 Skill 之后到底变了什么」变成磁盘上的数字：
+
+```bash
+# 无 Skill 的产出（基线）与本 Skill 的产出，各跑一次
+python3 "$SKILL_DIR"/scripts/gain_report.py report --result /app/work/baseline/result.json \
+  --blocks /app/work/blocks.json --material /app/work/material.txt -o /app/work/gain_baseline.json
+python3 "$SKILL_DIR"/scripts/gain_report.py report --result /app/output/result.json \
+  --blocks /app/work/blocks.json --material /app/work/material.txt -o /app/work/gain_skill.json
+python3 "$SKILL_DIR"/scripts/gain_report.py compare /app/work/gain_baseline.json /app/work/gain_skill.json \
+  -o /app/output/gain.json
+```
+
+它量化五件事，全部来自文件而不是自述：
+
+| 指标 | 含义 | 期望方向 |
+|---|---|---|
+| `contract_problems` | 结果契约缺项数 | → 0 |
+| `locator_coverage` | 带真实定位符的字段/论断占比 | 越高越好 |
+| `evidence_exactness` | 引语能在材料里逐字命中的比例 | 越高越好 |
+| `honesty_labelling` | 未报告/无法判断被如实标注的比例 | 越高越好 |
+| `fabrication_risk` | 产出中在材料里找不到的数字占比 | 越低越好 |
+
+跑不出基线（案例只允许一种条件）时，就**只报本 Skill 的绝对指标**，并在 `limitations` 说明
+对照条件不满足——不要编造一个基线数字。
+
+
+## 11. 本题自查清单
+
+- [ ] 每条断言都拆过原子
+- [ ] verdict 只用四个允许值
+- [ ] 否定/比较/条件未丢
+- [ ] 未被实验反驳的写成 insufficient_evidence 而非 contradicted
+- [ ] 冲突给两处定位符
