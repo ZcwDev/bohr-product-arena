@@ -331,7 +331,7 @@ def assemble_draft(plan: dict, all_blocks: list[dict], facts: list[dict],
                     text = rb["text"][:300]
                     lines.append(text)
                     loc = rb.get("locator", "")
-                    lines.append(f"  <!-- locator: {loc} -->")
+                    lines.append(f"  〔{loc}〕")   # 可见定位：HTML 注释渲染成 docx/PDF 后就消失了，读者无法回溯
                     spec_blocks.append({"type": "p", "text": text})
                     used_locators.add(loc)
             else:
@@ -364,7 +364,7 @@ def assemble_draft(plan: dict, all_blocks: list[dict], facts: list[dict],
                 loc = blk.get("locator", "")
                 if text:
                     lines.append(text)
-                    lines.append(f"  <!-- locator: {loc} -->")
+                    lines.append(f"  〔{loc}〕")   # 可见定位：HTML 注释渲染成 docx/PDF 后就消失了，读者无法回溯
                     lines.append("")
                     spec_blocks.append({"type": "p", "text": text})
                     used_locators.add(loc)
@@ -378,7 +378,7 @@ def assemble_draft(plan: dict, all_blocks: list[dict], facts: list[dict],
                     text = blk["text"][:400]
                     loc = blk.get("locator", "")
                     lines.append(text)
-                    lines.append(f"  <!-- locator: {loc} (fallback) -->")
+                    lines.append(f"  〔{loc}·回退〕")
                     lines.append("")
                     spec_blocks.append({"type": "p", "text": text})
                     used_locators.add(loc)
