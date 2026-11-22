@@ -314,9 +314,23 @@ def main() -> int:
     (out / "style_spec.json").write_text(json.dumps(spec, ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "formatted.docx").write_bytes(docx(spec, args.title, sections))
 
+    # 中文章节名同样算命中：稿件写「摘要/引言/方法/结果/讨论/结论」时，按英文名比对会把它们全判 missing
+    ALIASES = {
+        "abstract": ("abstract", "摘要"),
+        "introduction": ("introduction", "引言", "前言", "背景"),
+        "methods": ("methods", "method", "materials and methods", "材料与方法", "方法", "实验方法"),
+        "results": ("results", "结果", "实验结果"),
+        "discussion": ("discussion", "讨论"),
+        "conclusion": ("conclusion", "conclusions", "结论", "总结"),
+        "references": ("references", "bibliography", "参考文献"),
+    }
+    def section_hit(want: str) -> bool:
+        keys = (want.lower(),) + ALIASES.get(want.lower(), ())
+        return any(k in n.lower() for k in keys for n in names)
+
     rules, violations = [], []
     for want in spec["required_sections"]:
-        hit = any(want.lower() in n.lower() for n in names)
+        hit = section_hit(want)
         rules.append({"rule": f"section:{want}", "expected": "present",
                       "found": "present" if hit else "missing",
                       "action": "kept as Heading1" if hit else "listed as violation (not invented)",
