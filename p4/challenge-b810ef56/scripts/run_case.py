@@ -491,6 +491,55 @@ def numeric_facts(blocks: list[dict], limit: int = 80) -> tuple[list[dict], int]
                           "changed": False, "verification": "extracted_without_unit_conversion"})
     return facts, total
 
+SECTION_CUES = [
+    ("结果", ("结果表明", "结果显示", "显著", "差异", "提高", "降低", "增加", "减少", "升至", "降至",
+              "寿命", "孔隙率", "循环数", "相比", "results", "we observed", "significant", "increased",
+              "decreased", "compared")),
+    ("材料与方法", ("打印", "制备", "热处理", "保温", "升温", "测量", "测试", "采用", "使用", "试样", "样品",
+                    "分辨率", "频率", "应力比", "层厚", "设备", "方法", "实验", "扫描", "samples were",
+                    "we used", "were prepared", "was measured", "at a resolution")),
+    ("讨论与局限", ("局限", "限制", "不足", "未考察", "样本量", "推测", "可能", "因此", "说明", "limitation",
+                    "may", "suggest", "because", "however")),
+]
+
+
+def _section_of(text: str) -> str:
+    low = text.lower()
+    for name, cues in SECTION_CUES:
+        if any(c in low for c in cues):
+            return name
+    return "背景与目的"
+
+
+def compose_sections(claims: list[dict]) -> list[str]:
+    """Turn the extracted claims into a readable manuscript draft, one paragraph per role.
+
+    Every sentence is a material sentence kept verbatim with its locator, so nothing is invented; the
+    difference from a raw ledger is that the reader gets a manuscript of the requested genre
+    (背景/方法/结果/讨论) instead of a list of quotations with "not_reported" everywhere.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for row in claims:
+        buckets.setdefault(_section_of(str(row.get("claim") or "")), []).append(row)
+    out: list[str] = []
+    for name in ("背景与目的", "材料与方法", "结果", "讨论与局限"):
+        rows = buckets.get(name) or []
+        if not rows:
+            continue
+        parts = []
+        for row in rows:
+            sentence = str(row.get("claim") or "").strip()
+            # the ledger stores "Source S01 states: <sentence>"; the draft quotes the sentence itself
+            sentence = re.sub(r"^Source\s+S\d+\s+states:\s*", "", sentence)
+            sentence = sentence.strip().strip("“”\"").rstrip("。")
+            if not sentence:
+                continue
+            parts.append(f"{sentence}〔{row.get('locator')}〕")
+        if parts:
+            out += [f"## {name}", "", "；".join(parts) + "。", ""]
+    return out
+
+
 def auto_authoring(case: dict, claims: list[dict], facts: list[dict], no_material_reason: str | None) -> dict:
     lines: list[str] = ["# Evidence-bound writing result", ""]
     if no_material_reason:
@@ -508,9 +557,13 @@ def auto_authoring(case: dict, claims: list[dict], facts: list[dict], no_materia
     else:
         status = "partial"
         lines += ["## Scope", "",
-                  "Extractive source-attributed draft. Evidence strength is `not_reported` pending review.",
-                  "",
-                  "## Claim–evidence ledger", ""]
+                  "Draft composed from the supplied material: every sentence is a material sentence kept "
+                  "verbatim with its locator, grouped by rhetorical role so the result reads as a manuscript "
+                  "section rather than a quotation list. Evidence strength that the material does not state "
+                  "is marked `not_reported` in the ledger below, never asserted.",
+                  ""]
+        lines += compose_sections(claims)
+        lines += ["## Claim–evidence ledger", ""]
         for row in claims:
             lines += [f"### {row['claim_id']}", "",
                       f"{row['claim']} [{row['locator']}]", "",
