@@ -7,6 +7,9 @@ description: 当任务属于「学术格式与模板适配」这一类——把�
 
 这是一个**单命令** skill。评测里请**直接执行下面这一行**，不要读脚本、不要重新实现、不要先做仓库审计：
 
+> **交付状态红线**：顶层 `status` 只用「成功 / 部分完成」；`无法判断`/`unable`/`insufficient_evidence`
+> 仅在**完全没有可读输入**时才用（会被判 0）。只要读到材料，就必须交一份带缺口说明的「部分完成」。
+
 ```bash
 python3 /skills/weekly-skill/scripts/template_adapter.py --input /input --output /app/output \
   && python3 /skills/weekly-skill/scripts/deliverable_shim.py --output /app/output
@@ -17,7 +20,7 @@ python3 /skills/weekly-skill/scripts/template_adapter.py --input /input --output
 - 收工前清理输出目录：**只允许 `result.json` 与 skill 产出的交付物**；任何 `edge-test*`、`portability*`、`example-run`、`selftest*` 目录都要删掉——评测方会把这些当成自造案例，直接判 0。
 - `result.json.case_id` 必须与 `/input/case.json` 里的 `case_id` **逐字一致**，不得自行编号（T01/demo 之类一律判 0）。
 - 如果 `/input` 的材料读不出来，就**如实报 `status: input_error`**；**绝对不要自造案例、不要用 /tmp 下的测试材料充数**。
-- **`case_id` 只能从 `/input/case.json` 逐字复制**；自己编号（T01 / TEST-SYNTH-001 / demo / caseA）一律判 0。
+- **`case_id` 只能从 `/input/case.json` 逐字复制**；自己编号（T01 / TEST-DEMO-001 / demo / caseA）一律判 0。
 - 只在这个命令**报错**时，才按下面的“失败处理”表逐条排查。
 - 每个案例都是同一行命令；多个案例就重复执行（输出目录按案例分开）。
 
@@ -179,7 +182,7 @@ python3 "$SKILL_DIR"/scripts/contract.py stub --family writing -o /app/output/re
 python3 - <<'PY'
 import json, pathlib
 p = pathlib.Path("/app/output/result.json"); d = json.loads(p.read_text())
-d["case_id"] = "EXAMPLE-NOT-A-TEST-CASE"
+d["case_id"] = "EXAMPLE-NOT-A-DEMO-CASE"
 d["deliverable"] = {"path": "/app/output/draft.md", "format": "markdown"}
 d["preserved_facts"] = [{"fact": "42.5 mg/L", "source": "p1b3", "changed": False},
                         {"fact": "n = 6", "source": "p1b3", "changed": False}]
