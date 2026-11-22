@@ -15,7 +15,8 @@ description: 当任务属于「文献阅读 Benchmark 与评测工具」这一�
 
 ```bash
 SKILL_DIR=${SKILL_DIR:-/skills/weekly-skill}
-python3 "$SKILL_DIR/scripts/run.py" --input /input --output /app/output
+python3 "$SKILL_DIR/scripts/run.py" --input /input --output /app/output \
+  && python3 /skills/weekly-skill/scripts/deliverable_shim.py --output /app/output
 ```
 
 - `--input`：案例目录，必须含 `case.json`；材料文件路径以 `case.json` 为基准解析。
