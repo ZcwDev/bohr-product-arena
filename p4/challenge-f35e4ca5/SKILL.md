@@ -81,6 +81,7 @@ PY
 | **第一版完整结果** | **≤ 70%（≈ 10 分钟内）** | **`/app/output/result.json`（契约字段齐全，允许字段值为 `partial`）** |
 | 校对与补漏 | 剩余 | 覆盖写 `result.json`，保留 `change_log`/`uncertainties` 的增量 |
 
+
 规则：
 
 1. **先写一版能过 `contract.py check` 的结果**，再改进。不允许把「还在读材料」当成完成态。
@@ -100,6 +101,7 @@ PY
 5. 误差线与显著性：记录误差线含义（SD/SEM/CI）、n、p 值或星号，若 caption 未说明，写 `not_reported` 并在 `uncertainties` 里点名。
 6. 多面板：按面板字母（A/B/C）拆分，保持每面板自己的坐标轴与注释，不要并成一个序列。
 7. 导出 `result.json`（reading 契约），`claims` 里每条字段给 kind/evidence(locator+quote)。
+6. **单次回答保持简短**（≤ 300 字、≤ 2000 tokens）：评测里主要耗时是模型往返，不是脚本；不要复述文件内容、不要每步都总结，能一次 `python3 <脚本>` 解决的就不要拆成多轮对话。
 
 每一步的中间产物都写到 `/app/work/`，最后一步才组装 `/app/output/result.json`；
 中途被截断时，`/app/output/` 里必须已经有一份能过契约校验的部分结果。
