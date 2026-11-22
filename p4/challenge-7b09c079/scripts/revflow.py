@@ -1304,7 +1304,15 @@ def load_case(inp: Path) -> tuple[str, dict]:
             case = d
             break
     case_id = str(case.get("case_id") or "unreported")
-    workorder = case.get("organizer_edit_workorder") or {}
+    # The key name is the organizer's choice; accept the common aliases instead of silently returning an
+    # empty workorder (an empty workorder means no targets, an empty change_log and an unscorable result).
+    workorder = {}
+    for key in ("organizer_edit_workorder", "workorder", "edit_workorder", "revision_workorder",
+                "task_workorder", "organizer_workorder"):
+        cand = case.get(key)
+        if isinstance(cand, dict) and cand:
+            workorder = cand
+            break
     return case_id, workorder
 
 
@@ -1342,6 +1350,13 @@ def cmd_run(args) -> int:
     case_id, case_wo = load_case(inp)
     workorder = merge_workorder(case_wo, load_workorder(inp))
     blocks, corpus, notes = load_blocks(inp, prefix=_pid_prefix(case_id))
+    if blocks and not (workorder.get("target_ids") or []):
+        # No explicit edit instruction: default the targets to every propositional paragraph so the run still
+        # produces per-change, accept/reject-able annotations grounded in the material (instead of an empty log).
+        workorder = dict(workorder)
+        workorder["target_ids"] = [b["pid"] for b in blocks]
+        workorder.setdefault("project_mode", "all_blocks")
+        workorder.setdefault("id", "WO-AUTO-ALL-BLOCKS")
     if not blocks:
         payload = {"case_id": case_id, "status": "failed",
                    "deliverable": None, "preserved_facts": None, "evidence_map": None,
