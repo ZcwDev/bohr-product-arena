@@ -17,7 +17,7 @@
 
 ## 入口与复跑
 
-- 单命令入口：`python3 "$SKILL_DIR"/scripts/gain_report.py report --result /app/work/baseline/result.json --blocks /app/work/blocks.json --material /app/work/material.txt -o /app/work/gain_baseline.json python3 "$SKILL_DIR"/scripts/gain_report.py report --result /app/output/result.json --blocks /app/work/blocks.json --material /app/work/material.txt -o /app/work/gain_skill.json python3 "$SKILL_DIR"/scripts/gain_report.py compare /app/work/gain_baseline.json /app/work/gain_skill.json -o /app/output/gain.json`
+- 单命令入口：`作者型：agent 按 SKILL.md 写出 /app/output/result.json，脚本仅做机检与渲染`
 - 复跑需要的信息在 `repro_manifest.json`（命令行、python 版本、输入逐文件 sha256、输出逐文件 sha256）。
 - 六维文件元数据在 `inventory.tsv`（类型 / 元数据 / 目录层级 / 重复 sha256 / 版本链 / 权限与来源，缺项显式写 `missing`）。
 

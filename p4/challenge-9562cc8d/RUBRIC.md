@@ -14,7 +14,7 @@
 
 ## 入口与复跑
 
-- 单命令入口：`python3 /skills/weekly-skill/scripts/chart_render.py --input /input --output /app/output && python3 /skills/weekly-skill/scripts/attach_meta.py --input /input --output /app/output`
+- 单命令入口：`—`
 - 复跑需要的信息在 `repro_manifest.json`（命令行、python 版本、输入逐文件 sha256、输出逐文件 sha256）。
 - 六维文件元数据在 `inventory.tsv`（类型 / 元数据 / 目录层级 / 重复 sha256 / 版本链 / 权限与来源，缺项显式写 `missing`）。
 

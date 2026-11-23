@@ -17,7 +17,7 @@
 
 ## 入口与复跑
 
-- 单命令入口：`python3 "$SKILL_DIR"/scripts/figure.py check  /app/work/diagram.json python3 "$SKILL_DIR"/scripts/figure.py diagram /app/work/diagram.json -o /app/output/figure.svg python3 "$SKILL_DIR"/scripts/preview.py diagram /app/work/diagram.json -o /app/output/figure.png --pdf /app/output/figure.pdf python3 "$SKILL_DIR"/scripts/contract.py stub --family artifact -o /app/output/result.json`
+- 单命令入口：`python3 "$SKILL_DIR"/scripts/figure.py inspect existing.svg            # 列出 node-/edge-/label- id python3 "$SKILL_DIR"/scripts/figure.py edit existing.svg --patch ops.json -o edited.svg --png edited.png                    # 只改 patch 点名的元素`
 - 复跑需要的信息在 `repro_manifest.json`（命令行、python 版本、输入逐文件 sha256、输出逐文件 sha256）。
 - 六维文件元数据在 `inventory.tsv`（类型 / 元数据 / 目录层级 / 重复 sha256 / 版本链 / 权限与来源，缺项显式写 `missing`）。
 

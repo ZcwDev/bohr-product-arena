@@ -17,7 +17,7 @@
 
 ## 入口与复跑
 
-- 单命令入口：`python3 "$SKILL_DIR"/scripts/pdf_text.py extract /app/work/example.pdf -o /app/work/blocks.json --jsonl /app/work/blocks.jsonl echo '[{"id":"c1","quote":"reached 42.5 mg/L after 24 h"}]' > /app/work/quotes.json python3 "$SKILL_DIR"/scripts/evidence.py locate /app/work/blocks.json "42.5 mg/L" --limit 3 python3 "$SKILL_DIR"/scripts/evidence.py verify /app/work/blocks.json /app/work/quotes.json python3 "$SKILL_DIR"/scripts/contract.py stub --family reading -o /app/output/result.json`
+- 单命令入口：`作者型：agent 按 SKILL.md 写出 /app/output/result.json，脚本仅做机检与渲染`
 - 复跑需要的信息在 `repro_manifest.json`（命令行、python 版本、输入逐文件 sha256、输出逐文件 sha256）。
 - 六维文件元数据在 `inventory.tsv`（类型 / 元数据 / 目录层级 / 重复 sha256 / 版本链 / 权限与来源，缺项显式写 `missing`）。
 
