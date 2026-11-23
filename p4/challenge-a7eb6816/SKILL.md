@@ -12,6 +12,9 @@ description: 当任务属于「写作17｜科研成果转化写作」这一类�
    每条结论都带 `文件#定位`；
 3. 跑机检并按提示修正（发现问题就改 `result.json` 再跑一次）：
 
+> **交付状态红线**：顶层 `status` 只用「成功 / 部分完成」；`无法判断`/`unable`/`insufficient_evidence`
+> 仅在**完全没有可读输入**时才用（会被判 0）。只要读到材料，就必须交一份带缺口说明的「部分完成」。
+
 ```bash
 python3 /skills/weekly-skill/scripts/contract.py check /app/output/result.json --normalize
 ```
@@ -177,7 +180,7 @@ python3 "$SKILL_DIR"/scripts/contract.py stub --family writing -o /app/output/re
 python3 - <<'PY'
 import json, pathlib
 p = pathlib.Path("/app/output/result.json"); d = json.loads(p.read_text())
-d["case_id"] = "EXAMPLE-NOT-A-TEST-CASE"
+d["case_id"] = "EXAMPLE-NOT-A-DEMO-CASE"
 d["deliverable"] = {"path": "/app/output/draft.md", "format": "markdown"}
 d["preserved_facts"] = [{"fact": "42.5 mg/L", "source": "p1b3", "changed": False},
                         {"fact": "n = 6", "source": "p1b3", "changed": False}]

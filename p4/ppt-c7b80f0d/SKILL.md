@@ -12,6 +12,9 @@ description: 当任务属于「论文转学术 PPT」这一类——把论文转
    每条结论都带 `文件#定位`；
 3. 跑机检并按提示修正（发现问题就改 `result.json` 再跑一次）：
 
+> **交付状态红线**：顶层 `status` 只用「成功 / 部分完成」；`无法判断`/`unable`/`insufficient_evidence`
+> 仅在**完全没有可读输入**时才用（会被判 0）。只要读到材料，就必须交一份带缺口说明的「部分完成」。
+
 ```bash
 python3 /skills/weekly-skill/scripts/contract.py check /app/output/result.json --normalize
 ```

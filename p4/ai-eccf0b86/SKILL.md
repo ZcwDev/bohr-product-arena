@@ -12,6 +12,9 @@ description: 当任务属于「Agent产品经理实习生招募」这一类—�
    每条结论都带 `文件#定位`；
 3. 跑机检并按提示修正（发现问题就改 `result.json` 再跑一次）：
 
+> **交付状态红线**：顶层 `status` 只用「成功 / 部分完成」；`无法判断`/`unable`/`insufficient_evidence`
+> 仅在**完全没有可读输入**时才用（会被判 0）。只要读到材料，就必须交一份带缺口说明的「部分完成」。
+
 ```bash
 python3 /skills/weekly-skill/scripts/contract.py check /app/output/result.json --normalize
 ```
@@ -85,6 +88,7 @@ PY
 | **第一版完整结果** | **≤ 70%（≈ 10 分钟内）** | **`/app/output/result.json`（契约字段齐全，允许字段值为 `partial`）** |
 | 校对与补漏 | 剩余 | 覆盖写 `result.json`，保留 `change_log`/`uncertainties` 的增量 |
 
+
 规则：
 
 1. **先写一版能过 `contract.py check` 的结果**，再改进。不允许把「还在读材料」当成完成态。
@@ -102,6 +106,7 @@ PY
 3. 交付物按题面要求的格式产出（结构化文档/表格/方案），每条主张给依据。
 4. 给出可执行下一步：优先级、所需输入、成功判据。
 5. 输出 result.json（writing 契约）+ 可编辑交付件。
+6. **单次回答保持简短**（≤ 300 字、≤ 2000 tokens）：评测里主要耗时是模型往返，不是脚本；不要复述文件内容、不要每步都总结，能一次 `python3 <脚本>` 解决的就不要拆成多轮对话。
 
 每一步的中间产物都写到 `/app/work/`，最后一步才组装 `/app/output/result.json`；
 中途被截断时，`/app/output/` 里必须已经有一份能过契约校验的部分结果。
@@ -174,7 +179,7 @@ python3 "$SKILL_DIR"/scripts/contract.py stub --family writing -o /app/output/re
 python3 - <<'PY'
 import json, pathlib
 p = pathlib.Path("/app/output/result.json"); d = json.loads(p.read_text())
-d["case_id"] = "EXAMPLE-NOT-A-TEST-CASE"
+d["case_id"] = "EXAMPLE-NOT-A-DEMO-CASE"
 d["deliverable"] = {"path": "/app/output/draft.md", "format": "markdown"}
 d["preserved_facts"] = [{"fact": "42.5 mg/L", "source": "p1b3", "changed": False},
                         {"fact": "n = 6", "source": "p1b3", "changed": False}]

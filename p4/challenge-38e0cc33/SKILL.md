@@ -7,6 +7,9 @@ description: 科研绘图总课题：把「要画什么」变成可机检的画�
 
 单命令 skill。评测里请**直接执行下面这一行**，不要读脚本、不要先做仓库审计：
 
+> **交付状态红线**：顶层 `status` 只用「成功 / 部分完成」；`无法判断`/`unable`/`insufficient_evidence`
+> 仅在**完全没有可读输入**时才用（会被判 0）。只要读到材料，就必须交一份带缺口说明的「部分完成」。
+
 ```bash
 python3 /skills/weekly-skill/scripts/oneclick.py --input /input --output /app/output \
   && python3 /skills/weekly-skill/scripts/attach_meta.py --input /input --output /app/output
@@ -86,6 +89,7 @@ PY
 | **第一版完整结果** | **≤ 70%（≈ 10 分钟内）** | **`/app/output/result.json`（契约字段齐全，允许字段值为 `partial`）** |
 | 校对与补漏 | 剩余 | 覆盖写 `result.json`，保留 `change_log`/`uncertainties` 的增量 |
 
+
 规则：
 
 1. **先写一版能过 `contract.py check` 的结果**，再改进。不允许把「还在读材料」当成完成态。
@@ -104,6 +108,7 @@ PY
 4. 标注完整：轴标签+单位、量级（是否对数/归一化）、图例与系列一一对应、误差线含义（SD/SEM/CI）、n、显著性标记含义。
 5. 对照校验：脚本把 spec 里的数值 vs 图元（柱高/点坐标）反算比对，输出 `compliance_checks`；一致才交付。
 6. 导出 svg+png+pdf（可编辑源保留），图注写出数据来源与统计方法。
+6. **单次回答保持简短**（≤ 300 字、≤ 2000 tokens）：评测里主要耗时是模型往返，不是脚本；不要复述文件内容、不要每步都总结，能一次 `python3 <脚本>` 解决的就不要拆成多轮对话。
 
 每一步的中间产物都写到 `/app/work/`，最后一步才组装 `/app/output/result.json`；
 中途被截断时，`/app/output/` 里必须已经有一份能过契约校验的部分结果。
