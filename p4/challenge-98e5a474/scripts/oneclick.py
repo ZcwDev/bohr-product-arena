@@ -128,6 +128,25 @@ def clean_label(s: str) -> str:
     return s
 
 
+EDGE_TYPE_BY_CUE = [
+    (("抑制", "降低", "减少", "阻断", "下调", "拮抗", "负反馈", "inhibit", "suppress", "reduce", "decrease"),
+     "inhibition"),
+    (("转运", "入核", "出核", "转移", "transport", "translocat", "import", "export"), "transport"),
+    (("结合", "binding", "bind"), "binding"),
+    (("激活", "促进", "上调", "增强", "诱导", "催化", "activate", "promote", "increase", "induce"), "activation"),
+]
+
+
+def edge_type(cue: str) -> str:
+    """把原文关系词映射成渲染用的边类型：抑制要画成“断头”，否则整张图全是同一种箭头，
+    题面里“箭头语义（激活/抑制/转运）明确”这一项就无从体现。"""
+    low = str(cue or "").lower()
+    for words, kind in EDGE_TYPE_BY_CUE:
+        if any(w in low for w in words):
+            return kind
+    return "default"
+
+
 def build_spec(docs: list[dict], max_nodes: int = 14) -> dict:
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
@@ -146,7 +165,7 @@ def build_spec(docs: list[dict], max_nodes: int = 14) -> dict:
                                           "quote": s["text"][:160]}
                     if len(nodes) > max_nodes:
                         break
-                    edges.append({"from": nodes[a]["id"], "to": nodes[b]["id"], "label": cue,
+                    edges.append({"from": nodes[a]["id"], "to": nodes[b]["id"], "label": cue, "type": edge_type(cue),
                                   "locator": f'{d["doc"]}#{s["locator"]}', "quote": s["text"][:160]})
     if len(nodes) < 3:                          # fall back to the material's own structure
         for d in docs:
@@ -182,7 +201,7 @@ def build_spec(docs: list[dict], max_nodes: int = 14) -> dict:
         lab = str(e.get("label") or "").strip()
         if lab and lab not in kinds and lab not in ("→", "-"):
             kinds.append(lab)
-    legend = [{"type": "default",
+    legend = [{"type": (edge_type(k) if k != "包含" else "default"),
                "label": (f"{k}（结构层级，非原文关系词）" if k == "包含" else f"{k}（关系词取自原文）")}
               for k in kinds[:4]]
     if legend:
