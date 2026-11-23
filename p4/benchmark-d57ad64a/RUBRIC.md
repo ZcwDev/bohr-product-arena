@@ -1,25 +1,25 @@
-# 评分点对照（官方 15 个评分点）
+# RUBRIC — 学术写作 Benchmark 与评测工具：学术写作：完成产物，也保留来源
 
-## 实际效果 40
-任务完成度 15 = 题集/候选/参考/双评四类自动发现 + 加权逐题评分 + 报告；
-结果正确性 15 = 加权求和、accept/reject 变体区分、缺节定位（`missing: X`）；
-结果完整性 5 = 每题每条锚点都有分数与理由，缺候选/空串分别成类；
-结果可核验性 5 = 输入 sha256、逐题 `criteria[].why`、`per_item.tsv` 可对照。
+`benchmark-d57ad64a` · 公开链接：https://github.com/ZcwDev/bohr-product-arena/tree/main/p4/benchmark-d57ad64a
 
-## 使用增益 25
-质量增益 15 = A/B：锚点级 why、输入哈希、可复跑产物、改进建议（`GAIN.md`）；
-效率增益 5 = 不再手算加权与 kappa、不再人工找"哪一题哪一条锚点扣分"；
-增益可验证性 5 = 两边产物在仓里、命令可复跑。
+本题按组织方评分表打分（实际效果 40 / 使用增益 25 / 创新增益 15 / 可靠体验 10 / 生态贡献 10，公开 GitHub 链接另加最多 5 分）。下表把每一行映射到我实际交付的文件，**没有覆盖的写「未覆盖」**。
 
-## 创新增益 15
-新增能力 5 = 把"kappa 低"直接映射到"改锚点不改分数"的动作；
-方法改进 5 = 题型自动发现 + accept/reject 变体语义 + 小样本 kappa 退化显式 null；
-创新证据 5 = `GAIN.md` 对照数字。
+| 评分维度 | 分值 | 我的对应产物 | 状态 |
+| --- | --- | --- | --- |
+| 实际效果 | 40 | `result.json` | 覆盖 |
+| 使用增益 | 25 | — | 部分（有方法与自查，无独立 baseline 对照） |
+| 创新增益 | 15 | `result.json` | 覆盖 |
+| 可靠体验 | 10 | `SKILL.md` | 覆盖 |
+| 生态贡献 | 10 | `SKILL.md` | 覆盖 |
 
-## 可靠体验 10
-调用与易用性 3 = 一条命令；运行稳定性 4 = 解释器 shim、坏 JSON 跳过、缺输入降级 partial；
-异常处理 3 = 缺候选/空串/缺参考/仅一名评分员/小样本 kappa 五种情形各有处置。
+## 入口与复跑
 
-## 生态贡献 10
-文档完整性 3 = `SKILL.md` + `RUN.md` + `GAIN.md` + 本表；资源可复用性 4 = 单文件脚本 + 示例 + 期望输出；
-分享推广价值 3 = 题集 schema + 失败分类 + 锚点修订建议可直接复用。
+- 单命令入口：`python3 /skills/weekly-skill/scripts/writing_bench.py --input /input --output /app/output && python3 /skills/weekly-skill/scripts/deliverable_shim.py --output /app/output`
+- 复跑需要的信息在 `repro_manifest.json`（命令行、python 版本、输入逐文件 sha256、输出逐文件 sha256）。
+- 六维文件元数据在 `inventory.tsv`（类型 / 元数据 / 目录层级 / 重复 sha256 / 版本链 / 权限与来源，缺项显式写 `missing`）。
+
+## 已知未覆盖 / 不适用
+
+- 使用增益（25 分）要求与「不加载 skill 的基础 Agent」做对照；我只有本 skill 的产物与自查，
+  **没有在同输入下跑 baseline 的对照数据**，因此这一行按「部分」记，不冒充已证明的增益。
+- 创新增益（15 分）的「相对已有方案的边界」只能靠产物结构说明，没有第三方基线。

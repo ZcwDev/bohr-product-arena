@@ -6,14 +6,14 @@
 
 | 评分维度 | 分值 | 我的对应产物 | 状态 |
 | --- | --- | --- | --- |
-| 实际效果 | 40 | `result.json` | 覆盖 |
+| 实际效果 | 40 | `audit_output.json`, `check_report.json`, `result.json` | 覆盖 |
 | 引用/定位 | - | — | 未覆盖 |
-| 元数据/完整性 | - | — | 未覆盖 |
-| 可核验/复跑 | - | — | 未覆盖 |
+| 元数据/完整性 | - | `inventory.tsv`, `repro_manifest.json` | 覆盖 |
+| 可核验/复跑 | - | `check_report.json`, `regressions.json`, `repro_manifest.json` | 覆盖 |
 | 使用增益 | 25 | — | 部分（有方法与自查，无独立 baseline 对照） |
-| 创新增益 | 15 | `result.json` | 覆盖 |
-| 可靠体验 | 10 | `SKILL.md` | 覆盖 |
-| 生态贡献 | 10 | `SKILL.md` | 覆盖 |
+| 创新增益 | 15 | `check_report.json`, `result.json` | 覆盖 |
+| 可靠体验 | 10 | `SKILL.md`, `check_report.json` | 覆盖 |
+| 生态贡献 | 10 | `SKILL.md`, `regressions.json` | 覆盖 |
 
 ## 入口与复跑
 

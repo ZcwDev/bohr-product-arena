@@ -1,23 +1,28 @@
-# 评分点对照（官方 15 个评分点）
+# RUBRIC — challenge-105b70ee
 
-## 实际效果 40
-任务完成度 15 = 读 `target-fields.json` 逐字段产出值/单位/统计量/条件/对照/引文/定位；
-结果正确性 15 = 数字排除标识符（`HCT-116` 不会被读成 -116）、单位按原文抄录、空效应按"已报告的空值"处理；
-结果完整性 5 = 全字段覆盖 + 未报告明确写出（不写 0）；
-结果可核验性 5 = 每条带 `p{页}b{块}` 与逐字引文，`SELFCHECK.quotes_not_found=[]`。
+`challenge-105b70ee` · 公开链接：https://github.com/ZcwDev/bohr-product-arena/tree/main/p4/challenge-105b70ee
 
-## 使用增益 25
-质量增益 15 = 同输入 A/B：正确字段 1→3、漏检 3→1、可机检定位 0→3（`GAIN.md`）；
-效率增益 5 = 人工回原文核对的处数从"逐字段肉眼找"降到"按定位抽查"；
-增益可验证性 5 = 两边原始产物在仓里、命令可复跑。
+本题按组织方评分表打分（实际效果 40 / 使用增益 25 / 创新增益 15 / 可靠体验 10 / 生态贡献 10，公开 GitHub 链接另加最多 5 分）。下表把每一行映射到我实际交付的文件，**没有覆盖的写「未覆盖」**。
 
-## 创新增益 15
-新增能力 5 = 四态（reported/not_reported/source_conflict/extraction_failed）+ 空效应 qualifier；
-方法改进 5 = 头词+单位偏好打分、跨块冲突判定、标识符数字排除；创新证据 5 = `GAIN.md` 实测数字。
+| 评分维度 | 分值 | 我的对应产物 | 状态 |
+| --- | --- | --- | --- |
+| 实际效果 | 40 | `result.json` | 覆盖 |
+| 引用/定位 | - | — | 未覆盖 |
+| 元数据/完整性 | - | — | 未覆盖 |
+| 可核验/复跑 | - | — | 未覆盖 |
+| 使用增益 | 25 | — | 部分（有方法与自查，无独立 baseline 对照） |
+| 创新增益 | 15 | `result.json` | 覆盖 |
+| 可靠体验 | 10 | `SKILL.md` | 覆盖 |
+| 生态贡献 | 10 | `SKILL.md` | 覆盖 |
 
-## 可靠体验 10
-调用与易用性 3 = 一条命令；运行稳定性 4 = 解释器 shim + PyMuPDF/pdftotext 双路；异常处理 3 = 无文本层/无字段表/无证据 各有文案。
+## 入口与复跑
 
-## 生态贡献 10
-文档完整性 3 = `SKILL.md` + `RUN.md` + `GAIN.md` + 本表；资源可复用性 4 = 单文件脚本 + 示例 + 期望输出；
-分享推广价值 3 = "四态 + 空效应 + 定位符"可直接复用到任何表格抽取任务。
+- 单命令入口：`# 本 Skill 在评测环境里的安装位置（找不到就全局搜一下） SKILL_DIR=${SKILL_DIR:-/skills/weekly-skill} if [ ! -f "$SKILL_DIR/SKILL.md" ]; then SKILL_DIR=$(dirname "$(find / -name SKILL.md -not -path '*/node_modules/*' 2>/dev/null | grep -i week | head -1)") fi echo "SKILL_DIR=$SKILL_DIR"; ls "$SKILL_DIR" ls -la /input/ 2>/dev/null; ls -la /app/work 2>/dev/null python3 - <<'PY' import json, pathlib p = pathlib.Path("/input/case.json") print(p.read_text(encoding="utf-8")[:4000] if p.is_file() else "no /input/case.json") PY`
+- 复跑需要的信息在 `repro_manifest.json`（命令行、python 版本、输入逐文件 sha256、输出逐文件 sha256）。
+- 六维文件元数据在 `inventory.tsv`（类型 / 元数据 / 目录层级 / 重复 sha256 / 版本链 / 权限与来源，缺项显式写 `missing`）。
+
+## 已知未覆盖 / 不适用
+
+- 使用增益（25 分）要求与「不加载 skill 的基础 Agent」做对照；我只有本 skill 的产物与自查，
+  **没有在同输入下跑 baseline 的对照数据**，因此这一行按「部分」记，不冒充已证明的增益。
+- 创新增益（15 分）的「相对已有方案的边界」只能靠产物结构说明，没有第三方基线。
