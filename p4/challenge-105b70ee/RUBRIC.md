@@ -17,7 +17,7 @@
 
 ## 入口与复跑
 
-- 单命令入口：`# 本 Skill 在评测环境里的安装位置（找不到就全局搜一下） SKILL_DIR=${SKILL_DIR:-/skills/weekly-skill} if [ ! -f "$SKILL_DIR/SKILL.md" ]; then SKILL_DIR=$(dirname "$(find / -name SKILL.md -not -path '*/node_modules/*' 2>/dev/null | grep -i week | head -1)") fi echo "SKILL_DIR=$SKILL_DIR"; ls "$SKILL_DIR" ls -la /input/ 2>/dev/null; ls -la /app/work 2>/dev/null python3 - <<'PY' import json, pathlib p = pathlib.Path("/input/case.json") print(p.read_text(encoding="utf-8")[:4000] if p.is_file() else "no /input/case.json") PY`
+- 单命令入口：`python3 "$SKILL_DIR"/scripts/run.py --input /input --output /app/output --work /app/work && python3 /skills/weekly-skill/scripts/deliverable_shim.py --output /app/output  # 方式 B：shell 编排入口（需要更细的中间产物时用） bash "$SKILL_DIR"/scripts/run_case.sh --input /input --output /app/output --work /app/work`
 - 复跑需要的信息在 `repro_manifest.json`（命令行、python 版本、输入逐文件 sha256、输出逐文件 sha256）。
 - 六维文件元数据在 `inventory.tsv`（类型 / 元数据 / 目录层级 / 重复 sha256 / 版本链 / 权限与来源，缺项显式写 `missing`）。
 
