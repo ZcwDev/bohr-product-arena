@@ -517,6 +517,59 @@ def _check_keyword_match(indices: dict, atom_text: str) -> dict:
             "keywords": keywords, "negation_conflict": False}
 
 
+# 单位换算表：题面/证据里的量级必须可比，不能只比数字字面。
+# 之前把 "50 nm" 与 "50 µm" 判成 supported（数字都是 50），差 1000 倍；现在按 SI 换算后比较。
+_UNIT = {
+    "km": 1e3, "m": 1.0, "dm": 1e-1, "cm": 1e-2, "mm": 1e-3,
+    "μm": 1e-6, "µm": 1e-6, "um": 1e-6, "nm": 1e-9, "pm": 1e-12,
+    "å": 1e-10, "Å": 1e-10, "s": 1.0, "ms": 1e-3, "us": 1e-6,
+    "μs": 1e-6, "ns": 1e-9, "kg": 1e3, "g": 1.0, "mg": 1e-3,
+    "%": 1.0, "‰": 0.1,
+}
+
+
+def _num_unit(text: str) -> tuple[float | None, str]:
+    import re as _re
+    m = _re.match(r"^\s*([-+]?(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:[eE][-+]?\d+)?)\s*([^\s,;)]*)",
+                  str(text or ""))
+    if not m:
+        return None, ""
+    try:
+        val = float(m.group(1).replace(",", ""))
+    except Exception:
+        return None, ""
+    return val, (m.group(2) or "").strip()
+
+
+def _canon(val: float | None, unit: str) -> tuple[float | None, str]:
+    """换算到可比量级；识别不出单位时按"无单位"处理。"""
+    u = (unit or "").strip().lower()
+    if val is None:
+        return None, u
+    if u in _UNIT:
+        return val * _UNIT[u], u
+    if u in ("", "billion", "million", "k", "万", "亿"):
+        return val, ""
+    return val, u
+
+
+def _same_quantity(a: tuple[float | None, str], b: tuple[float | None, str]) -> tuple[bool, bool]:
+    """(值是否相等, 是否单位冲突)。允许 1% 相对误差；任一侧无单位则只比数字。"""
+    av, au = a
+    bv, bu = b
+    if av is None or bv is None:
+        return False, False
+    if bool(au) != bool(bu):
+        # 只有一侧带单位（如 claim「硬度 50」vs 证据「50%」）：指标/单位对不上，不能算命中
+        return False, False
+    if au and bu and au != bu:
+        # 单位不同：必须换算后相等；否则是"数字像、量级错"的冲突
+        tol = max(abs(av), abs(bv), 1e-12) * 0.01
+        return abs(av - bv) <= tol, abs(av - bv) > tol
+    tol = max(abs(av), abs(bv), 1e-12) * 0.01
+    return abs(av - bv) <= tol, False
+
+
 def _check_number_matches(indices: dict, atom_text: str) -> dict:
     """Check if numbers in the atom appear in any source.
     
@@ -528,6 +581,8 @@ def _check_number_matches(indices: dict, atom_text: str) -> dict:
         return {"matches": [], "coverage": 0.0, "best_source": None}
     
     matches = []
+    unit_conflicts = []
+    num_conflicts = []
     # Strip units for core numeric comparison
     import re as _re
     core_num = _re.compile(r'^[-+]?(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:[eE][-+]?\d+)?')
@@ -548,7 +603,23 @@ def _check_number_matches(indices: dict, atom_text: str) -> dict:
                 # Match on core numeric value (ignoring units for cross-lingual matching)
                 sn_core_m = core_num.match(sn_val)
                 sn_core = sn_core_m.group(0) if sn_core_m else sn_val
-                if cn_core and sn_core and cn_core == sn_core and cn_core not in matched_cores:
+                same_val, unit_conflict = _same_quantity(_canon(*_num_unit(cn_val)),
+                                                         _canon(*_num_unit(sn_val)))
+                if unit_conflict and cn_core and sn_core and cn_core == sn_core:
+                    unit_conflicts.append({
+                        "claim": cn_val, "evidence": sn_val,
+                        "locator": sn.get("locator", ""), "sentence": sn.get("sentence", "")[:200],
+                        "source": sid,
+                    })
+                    continue
+                if (au := _num_unit(cn_val)[1].lower()) and (bu := _num_unit(sn_val)[1].lower()) \
+                        and au == bu and not same_val and not unit_conflict:
+                    num_conflicts.append({
+                        "claim": cn_val, "evidence": sn_val,
+                        "locator": sn.get("locator", ""), "sentence": sn.get("sentence", "")[:200],
+                        "source": sid,
+                    })
+                if cn_core and sn_core and same_val and cn_core not in matched_cores:
                     matches.append({
                         "number": cn_val,
                         "core": cn_core,
@@ -561,7 +632,8 @@ def _check_number_matches(indices: dict, atom_text: str) -> dict:
     
     coverage = len(matched_cores) / len(claim_numbers) if claim_numbers else 0.0
     best_source = matches[0]["source"] if matches else None
-    return {"matches": matches, "coverage": coverage, "best_source": best_source}
+    return {"matches": matches, "coverage": coverage, "best_source": best_source,
+            "unit_conflicts": unit_conflicts, "num_conflicts": num_conflicts}
 
 
 def _verdict_for_claim(atoms_results: list[dict], claim_text: str) -> tuple[str, str]:
@@ -641,7 +713,27 @@ def _process_claim(claim: dict, sources: dict[str, dict],
         else:
             # Fallback: try number matching for cross-lingual claims
             num_result = _check_number_matches(indices, atom_text)
-            if num_result["matches"]:
+            best_source = num_result.get("best_source")
+            # 2026-11-24：单位/数值冲突要单独判"矛盾"，不能落进"证据不足"，更不能判支持。
+            # 例：claim 50 nm vs 证据 50 µm（数字相同、量级差 1000 倍）；claim 20% vs 证据 80%（同单位不同值）。
+            _conflicts = list(num_result.get("unit_conflicts") or []) + list(num_result.get("num_conflicts") or [])
+            if _conflicts and not num_result["matches"]:
+                _c0 = _conflicts[0]
+                best_source = _c0.get("source") or num_result.get("best_source")
+                atom_verdict = "contradicted"
+                score = 0.1
+                note = (f"claim「{_c0.get('claim')}」与证据「{_c0.get('evidence')}」量级/数值冲突"
+                        f"（{_c0.get('locator', '')}）：数字相近但单位或取值不同，不能判支持")
+                # 2026-11-24 修复：这一支以前只设了 verdict/score，没有 evidence_entry，
+                # 于是整条断言在组装时抛 UnboundLocalError、被降级成 processing error 的"证据不足"。
+                evidence_entry = {
+                    "locator": _c0.get("locator", ""),
+                    "quote": (_c0.get("evidence") or "")[:300],
+                    "score": round(score, 3),
+                    "source": best_source,
+                    "note": note,
+                }
+            elif num_result["matches"]:
                 coverage = num_result["coverage"]
                 best_match = num_result["matches"][0]
                 evidence_context = best_match.get("sentence", "")
